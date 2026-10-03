@@ -1,14 +1,20 @@
 #include "tracked_device_provider.h"
 
+#include "constants.h"
 #include "interface_hook_injector.h"
 #include "log.h"
+#include "pose_record.h" // fork
 #include "util.h"
 #include "virtual_desktop.h"
 #include "vrmath.h"
 #include <Eigen/Dense>
 #include <Eigen/Geometry>
+#include <cstring>
+#include <ctime>
 #include <math.h>
 #include <openvr_driver.h>
+#include <random>
+#include <string>
 
 namespace spacecal {
 vr::EVRInitError ServerTrackedDeviceProvider::Init(vr::IVRDriverContext* pDriverContext)
@@ -33,6 +39,20 @@ vr::EVRInitError ServerTrackedDeviceProvider::Init(vr::IVRDriverContext* pDriver
     m_alignmentParams.align_speed_small = 0.2f;
     m_alignmentParams.align_speed_large = 2.0f;
 
+    // fork: the pose ring is the only thing this driver adds besides the hold flag. It publishes
+    // every raw pose and correction to the overlay, which records and decides (docs/DESIGN.md 13).
+    {
+        for (auto& c : m_lastConnected)
+            c.store(255, std::memory_order_relaxed);
+        std::random_device rd;
+        const uint32_t session = static_cast<uint32_t>(rd()) ^ static_cast<uint32_t>(std::time(nullptr));
+        std::string error;
+        if (m_poseRing.create(blackbox::k_RING_DEFAULT_NAME, blackbox::k_RING_DEFAULT_CAPACITY, session, blackbox::unixNow(), blackbox::monoNow(), SPACECAL_VERSION_STRING, &error))
+            LOG_OPENVR_INFO("Pose ring open: session {:08x}, {} records", session ? session : 1u, m_poseRing.capacity());
+        else
+            LOG_OPENVR_WARN("Pose ring unavailable ({}); calibration works, nothing is recorded", error);
+    }
+
     m_ipcServer.Connect(this);
     hooking::InjectHooks(this, pDriverContext);
 
@@ -45,6 +65,7 @@ void ServerTrackedDeviceProvider::Cleanup()
 
     hooking::DisableHooks();
     m_ipcServer.Shutdown();
+    m_poseRing.close(); // fork
     VR_CLEANUP_SERVER_DRIVER_CONTEXT();
 }
 
@@ -239,6 +260,12 @@ bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(vr::TrackedDeviceIndex
     m_ipcServer.UpdatePose(unWhichDevice, newPose);
     m_latencyEstimator.push_pose(unWhichDevice, newPose);
 
+    // fork: black box sees every raw pose before spacecal touches it
+    const double tRecord = blackbox::monoNow();
+    m_poseRing.write(blackbox::makePoseRecord(static_cast<uint8_t>(unWhichDevice), newPose, tRecord));
+    recordWorldFromDriverIfChanged(unWhichDevice, newPose, tRecord);
+    recordConnectionIfChanged(unWhichDevice, newPose, tRecord);
+
     vr::DriverPose_t& modifiedPose = newPose;
 
     auto& transform = m_transforms[unWhichDevice];
@@ -282,7 +309,10 @@ bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(vr::TrackedDeviceIndex
                     .pos = worldCalib.translation(),
                 };
 
-                if (!m_cachedCalibrations[unWhichDevice].hasCalibration) {
+                if (transform.holdRelative() && m_cachedCalibrations[unWhichDevice].hasCalibration) {
+                    // fork: the overlay distrusts the head tracker; keep the last good correction and its blend state
+                    m_cachedCalibrations[unWhichDevice].lastUpdateTime = now;
+                } else if (!m_cachedCalibrations[unWhichDevice].hasCalibration) {
                     m_cachedCalibrations[unWhichDevice] = {
                         .pose = targetCalib,
                         .eDeltaSize = DeltaSize::TINY,
@@ -308,6 +338,10 @@ bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(vr::TrackedDeviceIndex
                 }
             }
 
+            recordAppliedIfChanged(unWhichDevice,
+                hmdQuatFromEigen(m_cachedCalibrations[unWhichDevice].pose.rot),
+                hmdVecFromEigenVec(m_cachedCalibrations[unWhichDevice].pose.pos),
+                static_cast<uint8_t>(m_cachedCalibrations[unWhichDevice].eDeltaSize), transform.scale, tRecord);
             applyCalibrationToPose(
                 modifiedPose,
                 hmdQuatFromEigen(m_cachedCalibrations[unWhichDevice].pose.rot),
@@ -316,6 +350,7 @@ bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(vr::TrackedDeviceIndex
                 transform.calibrateMotionVecs());
         } else {
             // classic world-space application
+            recordAppliedIfChanged(unWhichDevice, transform.rotation, transform.translation, 0, transform.scale, tRecord);
             applyCalibrationToPose(modifiedPose, transform.rotation, transform.translation, transform.scale, transform.calibrateMotionVecs());
         }
     }
@@ -397,3 +432,64 @@ void ServerTrackedDeviceProvider::SetAlignmentSpeedParams(ipc::protocol::Command
     m_alignmentParams = params;
 }
 }
+// ---- fork: black-box recorder glue ---------------------------------------------------------
+
+namespace spacecal {
+
+namespace {
+    constexpr double k_RECORD_TRANS_EPS = 0.0005; // 0.5 mm
+    constexpr double k_RECORD_ROT_EPS_COS = 0.99999990; // cos(0.05 deg / 2) ~ half-angle test on |q1.q2|
+
+    inline bool transformChanged(const ServerTrackedDeviceProvider::RecordedTransform_t& last, const double trans[3], const double quat[4])
+    {
+        if (!last.valid)
+            return true;
+        const double dx = trans[0] - last.trans[0];
+        const double dy = trans[1] - last.trans[1];
+        const double dz = trans[2] - last.trans[2];
+        if (std::sqrt(dx * dx + dy * dy + dz * dz) > k_RECORD_TRANS_EPS)
+            return true;
+        // normalised: lighthouse delivers |q| = 0.99999995, and the raw dot product of an unchanged
+        // quaternion with itself fell below the threshold, so every pose wrote a record (2026-09-30)
+        const double dot = std::abs(quat[0] * last.quat[0] + quat[1] * last.quat[1] + quat[2] * last.quat[2] + quat[3] * last.quat[3]);
+        const double norms = std::sqrt((quat[0] * quat[0] + quat[1] * quat[1] + quat[2] * quat[2] + quat[3] * quat[3])
+            * (last.quat[0] * last.quat[0] + last.quat[1] * last.quat[1] + last.quat[2] * last.quat[2] + last.quat[3] * last.quat[3]));
+        return norms > 0.0 && dot / norms < k_RECORD_ROT_EPS_COS;
+    }
+}
+
+void ServerTrackedDeviceProvider::recordWorldFromDriverIfChanged(vr::TrackedDeviceIndex_t device, const vr::DriverPose_t& pose, double t)
+{
+    const double trans[3] = { pose.vecWorldFromDriverTranslation[0], pose.vecWorldFromDriverTranslation[1], pose.vecWorldFromDriverTranslation[2] };
+    const double quat[4] = { pose.qWorldFromDriverRotation.w, pose.qWorldFromDriverRotation.x, pose.qWorldFromDriverRotation.y, pose.qWorldFromDriverRotation.z };
+    RecordedTransform_t& last = m_lastRecordedWorldFromDriver[device];
+    if (!transformChanged(last, trans, quat))
+        return;
+    last.valid = true;
+    std::memcpy(last.trans, trans, sizeof(trans));
+    std::memcpy(last.quat, quat, sizeof(quat));
+    m_poseRing.write(blackbox::makeWorldFromDriverRecord(static_cast<uint8_t>(device), trans, quat, t));
+}
+
+void ServerTrackedDeviceProvider::recordAppliedIfChanged(vr::TrackedDeviceIndex_t device, const vr::HmdQuaternion_t& rot, const vr::HmdVector3d_t& pos, uint8_t deltaSize, double scale, double t)
+{
+    const double trans[3] = { pos.v[0], pos.v[1], pos.v[2] };
+    const double quat[4] = { rot.w, rot.x, rot.y, rot.z };
+    RecordedTransform_t& last = m_lastRecordedApplied[device];
+    if (!transformChanged(last, trans, quat))
+        return;
+    last.valid = true;
+    std::memcpy(last.trans, trans, sizeof(trans));
+    std::memcpy(last.quat, quat, sizeof(quat));
+    m_poseRing.write(blackbox::makeAppliedRecord(static_cast<uint8_t>(device), trans, quat, deltaSize, scale, t));
+}
+
+void ServerTrackedDeviceProvider::recordConnectionIfChanged(vr::TrackedDeviceIndex_t device, const vr::DriverPose_t& pose, double t)
+{
+    const uint8_t now = pose.deviceIsConnected ? 1 : 0;
+    const uint8_t before = m_lastConnected[device].exchange(now, std::memory_order_relaxed);
+    if (before != now)
+        m_poseRing.write(blackbox::makeDeviceStateRecord(static_cast<uint8_t>(device), now == 1, before, static_cast<uint16_t>(pose.result), t));
+}
+
+} // namespace spacecal

@@ -3,6 +3,7 @@
 #include "calibration.h"
 #include "configuration.h"
 #include "constants.h"
+#include "guard/guard_ui.h"
 #include "imgui.h"
 #include "imgui_extensions.h"
 #include "localisation.h"
@@ -384,6 +385,7 @@ inline void buildCalibrationCommonControls(spacecal::TrackingSystemCalibration& 
 
         if (g_state.bIsSettingsAdvanced) {
             if (ImGui::CheckboxWithDescription(LOCALE_GET("continuous_relative_calibration").c_str(), &calibration.isRelativeCalibration, LOCALE_GET("continuous_relative_calibration_description").c_str())) {
+                calibration.forkForceTrigger = 5; // fork: blackbox::CalibrationTrigger::MANUAL
                 calibration.forceNextCalibration();
             }
         }
@@ -753,6 +755,7 @@ void draw_error_graphs(const std::string& targetDeviceName, double timeSpan, dou
 void page_calibration(double currentTime)
 {
     ImGui::TextTitle("%s", LOCALE_GET("calibration_title").c_str());
+    guard::draw_mark_event_row(); // fork
     ImGui::Separator();
 
     if (!isSpacecalRunningStateOk()) {
@@ -1792,6 +1795,12 @@ SpaceCalibratorVerticalTab_t g_spaceCalUiTabs[] = {
         .bIsAdvancedTab = false,
     },
     {
+        .szLocaleKey = "tab_page_live", // fork
+        .szIcon = ICON_MS_MONITOR_HEART,
+        .fnDrawTab = guard::page_live,
+        .bIsAdvancedTab = false,
+    },
+    {
         .szLocaleKey = "tab_page_graphs",
         .szIcon = ICON_MS_STACKED_LINE_CHART,
         .fnDrawTab = page_graphs,
@@ -1803,6 +1812,12 @@ SpaceCalibratorVerticalTab_t g_spaceCalUiTabs[] = {
         .fnDrawTab = page_base_station_management,
         .bIsAdvancedTab = false,
     }, // ICON_MS_CELL_TOWER
+    {
+        .szLocaleKey = "tab_page_guard", // fork
+        .szIcon = ICON_MS_SHIELD,
+        .fnDrawTab = guard::page_guard,
+        .bIsAdvancedTab = false,
+    },
     {
         .szLocaleKey = "tab_page_settings",
         .szIcon = ICON_MS_SETTINGS,
@@ -1828,7 +1843,7 @@ SpaceCalibratorVerticalTab_t g_spaceCalUiTabs[] = {
         .bIsAdvancedTab = false,
     },
 };
-constexpr size_t k_TAB_INDEX_LEARN = 5; // @NOTE: hardcoded- adjust if we add more
+constexpr size_t k_TAB_INDEX_LEARN = 6; // @NOTE: hardcoded- adjust if we add more (fork: +1 for the Guard tab)
 constexpr size_t k_SIZE_SPACECAL_UI_TABS = sizeof(g_spaceCalUiTabs) / sizeof(g_spaceCalUiTabs[0]);
 
 inline bool verticalTab(const SpaceCalibratorVerticalTab_t& tabData, bool selected, const ImVec2& size)

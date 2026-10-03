@@ -1,75 +1,65 @@
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://github.com/hyblocker/OpenVR-SpaceCalibrator/blob/develop/.github/logo_light.png?raw=true">
-  <source media="(prefers-color-scheme: light)" srcset="https://github.com/hyblocker/OpenVR-SpaceCalibrator/blob/develop/.github/logo_dark.png?raw=true">
-  <img alt="Space Calibrator" src="https://github.com/hyblocker/OpenVR-SpaceCalibrator/blob/develop/.github/logo.png?raw=true">
-</picture>
+# Space Calibrator 518
 
-This program is designed to allow you to synchronise multiple playspaces with one another in SteamVR. This fork of Space Calibrator (spacecal) also supports [continuous calibration](#continuous-calibration).
+A glitch-robust fork of [Space Calibrator 2.0](https://github.com/hyblocker/OpenVR-SpaceCalibrator) for mixed VR setups: a Quest or other inside-out headset together with SteamVR lighthouse trackers and controllers.
 
-Continuous calibration is a tracking mode which automatically aligns playspaces together, using a tracker on the headset.
+<p align="center">
+  <a href="https://github.com/Blise518B/SpaceCalibrator518/releases/latest/download/SpaceCalibrator518-Windows.zip">
+    <img src="docs/images/download-badge.svg" alt="Download for Windows: SpaceCalibrator518-Windows.zip, latest release">
+  </a><br>
+  <sub>Every version on the <a href="https://github.com/Blise518B/SpaceCalibrator518/releases">Releases</a> page</sub>
+</p>
 
-This version of Space Calibrator 2.0 has been rewritten from the ground up for improved robustness, QOL improvements and less tracking issues, amongst others. For a list of differences compared with other versions, please see [the features list](#features)
+![The Live tab: head tracker error, guard state, calibration changes](docs/images/live-tab.png)
 
-## Installing
+## Why this fork
 
-### Steam
+Space Calibrator keeps the lighthouse playspace lined up with your headset by watching one tracker on your head. Two things knock that over:
 
-> [!NOTE]  
-> **Space Calibrator is also available on Steam.**
+- **A glitching tracker.** The head tracker jumps 20 to 30 cm for a few seconds or minutes (reflections, base station mix-ups). The calibration follows it, and your whole body moves away from your head.
+- **SteamVR moving its base stations.** SteamVR keeps re-measuring where its base stations are and moves them on its internal map, up to 30 cm at a time. Every tracker tracked from a moved station jumps, although nothing in your room moved. In one recorded four-hour session this happened 68 times, and trackers jumped by more than 2 cm 129 times, by up to 24 cm.
 
-You may find [Space Calibrator on Steam here](https://s.team/a/3368750).
+This fork tells these cases apart from real movement and keeps your body where it belongs.
 
-### From GitHub
+## What it adds
 
-To install Space Calibrator, please get the latest installer from the downloads page, and install it. Make sure that you have:
-- Installed [Visual C++ Redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe).
-- Installed SteamVR and run it at least once with a VR headset connected.
-- SteamVR is not running before you run the installer. If SteamVR is running the installer will not be able to install Space Calibrator correctly.
+- **Glitch guard.** Every lighthouse device is checked against its own reported velocity and against all the others. A tracker that jumps alone is flagged and recorded; a jump of the whole playspace is corrected at once. Switch on hold in the Guard tab and the calibration is frozen while the head tracker is in doubt, so its glitches can't move your body (off by default until you have checked a few recordings).
+- **Base station moves corrected exactly.** The fork reads SteamVR's map changes from the transforms that come with every pose, so it never mistakes them for your movement. Each tracker stays in place when the station it is tracked from moves, and any held offset slides back to SteamVR's map at 1.5 cm/s. In the session above, jumps over 2 cm went from 129 to 0.
+- **Black box recorder.** Records every raw pose. Press F9, the Mark button or hold both triggers when something looks wrong, and the five minutes before and after are saved, with a note of what happened.
+- **Live tab.** Real-time graphs of the head tracker error, the guard's verdicts, calibration changes, glitch levels per device and solver health. Every graph explains itself on hover.
+- **Trigger hold.** Hold both triggers for 1.5 s to force a fresh calibration and trust every device again.
+- **Updates without restarting SteamVR.** All logic lives in the overlay; the driver only applies corrections and publishes poses. The overlay starts with SteamVR.
+- **Tools** (`tools/`, Python): replay a recording through the guard, analyse a whole session, turn a session into a one-page report.
 
-## Calibration
+## Install
 
-If you do not wish to use continuous calibration, you will have to use regular calibration. This means that every so often you will have to sync your headset's playspace with your tracker's playspace.
+1. Download the zip with the button above and unpack it to a folder that can stay where it is. SteamVR loads the driver from there.
+2. Close SteamVR and double-click `use-fork-driver.bat`. It tells SteamVR to load this driver instead of the Steam version of Space Calibrator; both use the same driver name, so only one of them can be active.
+3. Start SteamVR, then start `SpaceCalibrator.exe` once. From then on it starts with SteamVR.
 
-To calibrate:
-1. Copy the chaperone/guardian bounds from your HMD's play space
-   > You will only have to do this once. Connect your VR headset and start SteamVR. Then go to space calibrator's window (it will be minimised), and click the "Copy Chaperone" button.
+`use-steam-driver.bat` switches back to the Steam version.
 
-2. Open the SteamVR dashboard. At the bottom, click on the Space Calibrator icon.
-3. In the Space Calibrator overlay, you'll see two lists at the top. On the left `Reference Space` column, select the controller you'll be calibrating along (e.g. Quest controller, Pico controller). On the right `Target Space`, select your SteamVR tracker (e.g. Vive Ultimate Tracker, Vive Tracker 3.0, Vive Ultimate Tracker). You can use the Identify button to make the controllers blink and tracker LEDs flash to see if you've selected the correct ones.
-4. Click the "Start calibration" button, and start calibrating.
+### Build from source
 
-## Continuous Calibration
+On Windows with Visual Studio 2022 (C++ workload) and CMake 3.24 or newer:
 
-> [!IMPORTANT]  
-> **A tracker attached on your headset is required for this.**
+```
+git clone --recursive https://github.com/Blise518B/SpaceCalibrator518
+cd SpaceCalibrator518
+build.bat
+```
 
-To enable continuous calibration mode, first select your headset on the left column, then the tracker on your headset on the right column. Once you've done so, click `Start Calibration`, and click cancel. Then click `Continuous Calibration` to enable continuous calibration.
+`build.bat` builds everything into `dist\` and registers the overlay to start with SteamVR. Then, with SteamVR closed, tell SteamVR to load this driver:
 
-1. Start SteamVR with the VR headset you wish to use.
-2. Turn on **ONLY** the tracker which is attached on the VR headset.
-3. Select the VR headset and tracker and calibrate.
-4. Turn on your other devices.
-5. You should see them line up with you as you after moving around your playspace for a bit for an initial calibration.
+```
+powershell -ExecutionPolicy Bypass -File tools\use-driver.ps1 fork
+```
 
-## Features
+`tools\use-driver.ps1 steam` switches back to the Steam version. `tools\make_release_zip.ps1` builds the zip from the download button.
 
-This version has been rewritten from scratch. It shares little code with the original repository but keeps similar ideas.
+Guard and recorder settings are in `%APPDATA%\space-calibrator\guard.json` and in the Guard tab. How it works in detail: [docs/DESIGN.md](docs/DESIGN.md).
 
-Major features:
-- The UI has been reworked substantially to improve UX. The goal is to reduce the need of tutorials and have the app explain how to calibrate and what one may do to improve calibrations directly in app rather than elsewhere.
-- Calibrations are now more streamlined. The calibration logic has been simplified to attempt minimising the chances of erroneous data being injected into a calibration sequence yielding poor calibrations.
-- Calibrations now require you to move around by default. The app will ignore data without enough movement to minimise the chances of poor calibrations arising due to a lack of movement.
-- Continuous calibration has been improved to reduce the frequency of mis-calibrations as much as possible.
-- Relative calibrations. The aim is to re-formulate how a calibration is stored so that it is now relative to your headset, meaning that if your headset drifts your trackers would along with it, hiding the drift entirely.
-- Made calibrating require a minimum amount of movement to ensure that a calibration is valid. This is to improve the success rate of most calibrations.
-- Robust logging. Logs are saved at `%APPDATA%/space-calibrator/logs` on Windows, and `~/.local/share/space-calibrator/logs` on Linux.
-- Settings are saved to a JSON file at `%APPDATA%/space-calibrator/config.json` on Windows, and `~/.local/share/space-calibrator/config.json` on Linux.
-- Linux support. The codebase can now be compiled for Linux x64 amd arm64. Official support assumes Steam Runtime 4, compatibility with other distributions is NOT guaranteed. This is not thoroughly tested but contributions / bug reports are appreciated.
-- Space Calibration now supports translations. The app will default to showing text in your system language, and you may override it from the Settings page. For guidance regarding contributing translations please see [TRANSLATING.md](https://github.com/hyblocker/OpenVR-SpaceCalibrator/blob/develop/TRANSLATING.md)
-- The UI renderer has been upgraded and now supports either OpenGL, DirectX11 (on Windows only) or Vulkan 1.3. The app will default to DirectX11 on Windows and Vulkan on Linux. This is to reduce issues for end users on buggy GPU drivers causing the app to fail to launch. You can override the renderer by passing `--renderer <opengl|dx11|vulkan>` as launch arguments.
-- Base Station management has been integrated into the app to allow you to control them without 3rd party software.
-- More things that aren't mentioned here.
+## Credits and license
 
-## Help
+An unofficial fork, not made or supported by the Space Calibrator developers; please report problems here, not upstream. Based on Space Calibrator 2.0 by Hyblocker and contributors and on the original OpenVR-SpaceCalibrator by Justin Li. MIT license, see [LICENSE](LICENSE).
 
-If you need help with setting up this program, please check the [wiki](https://github.com/pushrax/OpenVR-SpaceCalibrator/wiki), or join the [Discord server](https://discord.gg/ja3WgNjC3z).
+<sub>Built with the help of AI.</sub>

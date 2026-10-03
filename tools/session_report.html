@@ -1,0 +1,668 @@
+<title>{{TITLE}}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Saira+Semi+Condensed:wght@600;700&family=Source+Sans+3:wght@400;600&display=swap">
+<style>
+/* Layout: one reading column of instrument panels; summary first, then the night as six linked charts. */
+:root {
+  --bg: #f2f5f4; --surface: #ffffff; --fg: #17201e; --muted: #5a6864; --line: #d3dcd9; --grid: #e4eae8;
+  --accent: #0b7d72; --accent-soft: rgba(11, 125, 114, 0.14);
+  --good: #2f8a57; --warn: #c3860f; --bad: #c4443b; --recover: #3a6fbf; --cal: #7650bf; --lost: #9aa5a2;
+  --font-display: "Saira Semi Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
+  --font-body: "Source Sans 3", "Segoe UI", system-ui, sans-serif;
+  --font-data: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --radius: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1312; --surface: #151c1a; --fg: #e2eae7; --muted: #93a29d; --line: #2a3532; --grid: #212b28;
+    --accent: #3cbcae; --accent-soft: rgba(60, 188, 174, 0.16);
+    --good: #4cb27a; --warn: #e0a63a; --bad: #e4675c; --recover: #6f9fe6; --cal: #a687e8; --lost: #5f6b68;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1312; --surface: #151c1a; --fg: #e2eae7; --muted: #93a29d; --line: #2a3532; --grid: #212b28;
+  --accent: #3cbcae; --accent-soft: rgba(60, 188, 174, 0.16);
+  --good: #4cb27a; --warn: #e0a63a; --bad: #e4675c; --recover: #6f9fe6; --cal: #a687e8; --lost: #5f6b68;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 15px; line-height: 1.5; }
+.wrap { max-width: 1180px; margin: 0 auto; padding-inline: 16px; padding-block: 28px 56px; display: grid; gap: 22px; }
+header { display: grid; gap: 6px; }
+.eyebrow { font-family: var(--font-data); font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+h1 { font-family: var(--font-display); font-weight: 700; font-size: clamp(30px, 5vw, 44px); line-height: 1.05; margin: 0; letter-spacing: 0.01em; text-wrap: balance; }
+.sub { color: var(--muted); margin: 0; max-width: 70ch; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.stat { background: var(--surface); padding: 12px 14px; display: grid; gap: 2px; min-width: 0; }
+.stat b { font-family: var(--font-data); font-weight: 500; font-size: 20px; font-variant-numeric: tabular-nums; }
+.stat span { font-size: 12.5px; color: var(--muted); }
+.stat.warn b { color: var(--warn); }
+.stat.bad b { color: var(--bad); }
+.findings { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; max-width: 80ch; }
+.findings li { padding-left: 18px; position: relative; }
+.findings li::before { content: ""; position: absolute; left: 2px; top: 0.62em; width: 7px; height: 7px; border-radius: 2px; background: var(--accent); }
+section.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 16px 10px; display: grid; gap: 8px; min-width: 0; }
+.ghead { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; position: relative; }
+.ghead h2 { font-family: var(--font-display); font-weight: 600; font-size: 21px; margin: 0; letter-spacing: 0.01em; }
+.gnum { font-family: var(--font-data); font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; }
+.caption { margin: 0; color: var(--muted); font-size: 14px; max-width: 90ch; }
+.info { font-family: var(--font-data); font-weight: 500; font-size: 12px; width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--accent); color: var(--accent); background: var(--accent-soft); cursor: help; display: inline-grid; place-items: center; padding: 0; }
+.info:focus-visible, .seg button:focus-visible, .chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pop { display: none; position: absolute; z-index: 20; top: calc(100% + 6px); left: 0; width: min(520px, calc(100vw - 48px)); background: var(--surface); color: var(--fg); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18); font-size: 14px; }
+.pop p { margin: 0 0 8px; }
+.pop p:last-child { margin-bottom: 0; }
+.pop strong { font-weight: 600; }
+.ghead .info:hover + .pop, .ghead .info:focus + .pop, .pop.open { display: block; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; margin-left: auto; }
+.seg button { font: inherit; font-size: 13px; padding: 3px 10px; background: transparent; color: var(--muted); border: 0; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--accent-soft); color: var(--fg); font-weight: 600; }
+.chart { width: 100%; min-width: 0; }
+.views { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.views figure { margin: 0; display: grid; gap: 2px; min-width: 0; }
+.views figcaption { font-family: var(--font-display); font-weight: 600; font-size: 15px; }
+.views .chart { aspect-ratio: 1 / 1; max-width: 100%; }
+.pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.pair h3 { font-family: var(--font-display); font-weight: 600; font-size: 15px; margin: 0; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font: inherit; font-size: 13px; border: 1px solid var(--line); background: transparent; color: var(--fg); border-radius: 999px; padding: 3px 11px; cursor: pointer; display: inline-flex; gap: 7px; align-items: baseline; }
+.chip time { font-family: var(--font-data); font-size: 12px; color: var(--muted); }
+.chip[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.facts { margin: 0; padding-left: 18px; display: grid; gap: 2px; font-size: 14px; max-width: 95ch; }
+.legend-note { font-size: 12.5px; color: var(--muted); }
+.key { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12.5px; color: var(--muted); }
+.key i { display: inline-block; width: 18px; height: 8px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
+footer { color: var(--muted); font-size: 13px; display: grid; gap: 6px; max-width: 95ch; }
+footer code { font-family: var(--font-data); font-size: 12px; overflow-wrap: anywhere; }
+.nochart { color: var(--muted); font-style: italic; padding: 18px 0; }
+@media (max-width: 760px) {
+  .views, .pair { grid-template-columns: 1fr; }
+  .views .chart { max-width: 420px; }
+  .seg { margin-left: 0; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow" id="eyebrow">SpaceCalibrator518 night report</div>
+    <h1 id="title">{{TITLE}}</h1>
+    <p class="sub" id="sub"></p>
+  </header>
+
+  <div class="stats" id="stats"></div>
+  <ul class="findings" id="findings"></ul>
+
+  <section class="panel" id="p-ov">
+    <div class="ghead">
+      <span class="gnum">1</span><h2>The night, device by device</h2>
+      <button class="info" type="button" aria-label="How to read this chart" aria-controls="h-ov">i</button>
+      <div class="pop" id="h-ov" role="tooltip">
+        <p><strong>What it shows.</strong> One row per device across the whole night. Grey bars: the device was not tracking for longer than a quarter second. Coloured bars: the guard did not trust the device (amber suspect, red untrusted, blue recovering). Crosses: the glitch check flagged a step the device's own velocity could not explain; bigger crosses are bigger jumps. The top row holds the markers (triangles, filled when you set them yourself) and every calibration step over 5 cm (purple diamonds, bigger for bigger steps).</p>
+        <p><strong>How to read it.</strong> Look for columns where several rows light up at once: that is something shared, like a base station, an occlusion or the playspace, rather than one bad tracker. A single row that keeps flashing is that device's own problem. Drag across the chart to zoom; charts 2 to 4 follow. Double-click to see the whole night again.</p>
+      </div>
+    </div>
+    <p class="caption">Where tracking was lost, where the guard stepped in (as the overlay did live that night), and where something jumped.</p>
+    <div class="key" id="key-ov"></div>
+    <div class="chart" id="c-ov"></div>
+  </section>
+
+  <section class="panel" id="p-head">
+    <div class="ghead">
+      <span class="gnum">2</span><h2>Head tracker error</h2>
+      <button class="info" type="button" aria-label="How to read this chart" aria-controls="h-head">i</button>
+      <div class="pop" id="h-head" role="tooltip">
+        <p><strong>What it shows.</strong> How far the head tracker, placed by the calibration, was from where the headset says it should be (headset pose plus the mounting offset the guard learns). Recomputed for every 1/60 s by replaying the recording through today's guard code, so the background states can differ from chart 1, which shows what the guard did live. The bold line is a 30-second running median (the trend), the faint line is the worst moment of each second. The scale is logarithmic, so millimetres and decimetres both stay readable. Background colour: the guard's state for the head tracker. Dashed lines at <span data-g="r_ok"></span> and <span data-g="r_high"></span>. Lower part: the same error split into forward, right and up of the headset, as 10-second medians.</p>
+        <p><strong>How to read it.</strong> A calm line under <span data-g="r_ok"></span> is a good calibration. Short spikes that drop right back are glitches or fast head turns. A plateau above <span data-g="r_ok"></span> that ends at a calibration step (chart 1 and 3) is a calibration that was off until the solver fixed it. The lower part tells you the direction of a plateau.</p>
+        <p><strong>Keep in mind.</strong> Offsets under <span data-g="r_ok"></span> fade within about ten seconds because the guard keeps learning the mounting offset, so this chart shows sudden errors better than slow drift. The replay ran in 20-minute pieces and each piece starts fresh, so the first seconds of each piece read near zero.</p>
+      </div>
+    </div>
+    <p class="caption" id="cap-head">Distance between where the calibration puts the head tracker and where the headset expects it.</p>
+    <div class="chart" id="c-head"></div>
+  </section>
+
+  <section class="panel" id="p-views">
+    <div class="ghead">
+      <span class="gnum">2b</span><h2>Where the head tracker sat, all night</h2>
+      <button class="info" type="button" aria-label="How to read this chart" aria-controls="h-views">i</button>
+      <div class="pop" id="h-views" role="tooltip">
+        <p><strong>What it shows.</strong> Every 1/60 s of the night as a point, in the same three views as the Live tab: from above (right and forward), from the side (forward and up) and from behind (right and up). The centre is where the head tracker should be. Colour is how long it spent at that spot (darker or brighter means more time, log scale). Rings at <span data-g="r_ok"></span> and <span data-g="r_high"></span>. All three use one scale.</p>
+        <p><strong>How to read it.</strong> A tight core in the centre of all three is a good night. A cloud stretched along one axis shows the direction the errors usually took. A second bright spot away from the centre is a stretch of time with a different offset, for example before and after a calibration step. Hover a cell to see how long the tracker sat there.</p>
+      </div>
+    </div>
+    <div class="views">
+      <figure><figcaption>From above</figcaption><div class="chart" id="c-top"></div></figure>
+      <figure><figcaption>From the side</figcaption><div class="chart" id="c-side"></div></figure>
+      <figure><figcaption>From behind</figcaption><div class="chart" id="c-back"></div></figure>
+    </div>
+  </section>
+
+  <section class="panel" id="p-cal">
+    <div class="ghead">
+      <span class="gnum">3</span><h2>Calibration through the night</h2>
+      <button class="info" type="button" aria-label="How to read this chart" aria-controls="h-cal">i</button>
+      <div class="pop" id="h-cal" role="tooltip">
+        <p><strong>What it shows.</strong> Top: the calibration that was applied, as the shift of the lighthouse world in x, y and z (cm, relative to the night's median) and its turn around the vertical axis (yaw, degrees, right axis). Every step is one applied calibration. Bottom: every calibration the solver tried, placed by how far it would have moved things. Filled dots were applied, open dots rejected; the colour is the reason.</p>
+        <p><strong>How to read it.</strong> Flat lines on top mean a stable calibration; steps of a few millimetres are normal fine tuning. Big steps (over 5 cm) are where the solver changed its mind: check chart 2 at the same moment. If the head tracker error dropped after the step, it was a fix; if it rose, the step made things worse. A cloud of open dots high up means the solver kept proposing big moves and its checks held them back.</p>
+      </div>
+    </div>
+    <p class="caption" id="cap-cal">What the solver applied, and what it proposed and rejected.</p>
+    <div class="chart" id="c-cal"></div>
+  </section>
+
+  <section class="panel" id="p-heat">
+    <div class="ghead">
+      <span class="gnum">4</span><h2>Minute by minute</h2>
+      <button class="info" type="button" aria-label="How to read this chart" aria-controls="h-heat">i</button>
+      <div class="pop" id="h-heat" role="tooltip">
+        <p><strong>What it shows.</strong> One cell per minute and device. "Lost tracking": the share of that minute the device was not tracking (calm colour means it tracked the whole minute). "Glitches": how many ticks the glitch check flagged in that minute.</p>
+        <p><strong>How to read it.</strong> Vertical stripes are moments that hit every device (a base station, the headset, a shared occlusion). Horizontal stripes are one device having a bad time (battery, a loose strap, a covered sensor). Hover a cell for the numbers, including the device's average height that minute, which shows whether you were standing, sitting or lying down.</p>
+      </div>
+      <div class="seg" role="group" aria-label="Value shown">
+        <button type="button" id="heat-lost" aria-pressed="true">Lost tracking</button>
+        <button type="button" id="heat-glitch" aria-pressed="false">Glitches</button>
+      </div>
+    </div>
+    <div class="chart" id="c-heat"></div>
+  </section>
+
+  <section class="panel" id="p-inc">
+    <div class="ghead">
+      <span class="gnum">5</span><h2>Moments worth a closer look</h2>
+      <button class="info" type="button" aria-label="How to read this chart" aria-controls="h-inc">i</button>
+      <div class="pop" id="h-inc" role="tooltip">
+        <p><strong>What it shows.</strong> The strongest moments of the night, picked automatically: big unexplained jumps, calibration steps of 10 cm or more, markers you set, several devices losing tracking at once, the head tracker becoming untrusted. Time runs in seconds around the moment. Top strip: events (guard state changes, calibrations, markers, lost tracking). Then the head tracker error, each device's unexplained step at the guard's 60 Hz tick (log scale, dashed line is the jump limit), and each device's height.</p>
+        <p><strong>How to read it.</strong> A spike above the jump limit for one device while the head tracker error stays flat means the guard caught a glitch that did not touch the calibration. All heights stepping at the same moment is the calibration or the playspace moving. A gap in a line is lost tracking. The list above the chart says in words what happened.</p>
+      </div>
+    </div>
+    <div class="chips" id="inc-chips" role="group" aria-label="Moments"></div>
+    <ul class="facts" id="inc-facts"></ul>
+    <div class="chart" id="c-inc"></div>
+  </section>
+
+  <section class="panel" id="p-tune">
+    <div class="ghead">
+      <span class="gnum">6</span><h2>Normal movement and glitches</h2>
+      <button class="info" type="button" aria-label="How to read this chart" aria-controls="h-tune">i</button>
+      <div class="pop" id="h-tune" role="tooltip">
+        <p><strong>What it shows.</strong> For each device: how many ticks per hour of tracking the guard would flag as a glitch if its allowance were set to the value on the horizontal axis. A tick is flagged when the part of its step that the device's own velocity does not explain is larger than allowance × tick + <span id="tol-pos"></span>. The dashed line is the current setting (v_unexplained <span id="lim-pos"></span>). The right chart is the same for turning (rot_unexplained_dps, with <span id="tol-rot"></span> tolerance).</p>
+        <p><strong>How to read it.</strong> Each curve starts at the rate of ticks whose unexplained step is bigger than the tolerance at all, and falls as the allowance grows. Where it crosses the dashed line is how often that device gets flagged per hour now. If a curve keeps falling right after the line, many of today's flags are small steps a slightly higher setting would accept. The part that stays flat far to the right (tens of m/s) is real jumps, which no sensible setting should hide. Devices tracked for less than a quarter of an hour are left out.</p>
+      </div>
+    </div>
+    <div class="pair">
+      <div><h3>Position</h3><div class="chart" id="c-tpos"></div></div>
+      <div><h3>Rotation</h3><div class="chart" id="c-trot"></div></div>
+    </div>
+  </section>
+
+  <footer id="foot"></footer>
+</div>
+
+<script type="application/json" id="report-data">{{DATA}}</script>
+<script src="{{PLOTLY}}"></script>
+<script>
+(function () {
+  "use strict";
+  const D = JSON.parse(document.getElementById("report-data").textContent);
+  const G = D.guard;
+  const STATE_NAMES = ["trusted", "suspect", "untrusted", "recovering"];
+  const devById = {};
+  D.devices.forEach((d, i) => { devById[d.id] = Object.assign({ row: i }, d); });
+
+  // ---- small helpers ----
+  const W = (s) => new Date(D.wall0 + s * 1000).toISOString().slice(0, 23).replace("T", " ");
+  const clock = (s) => new Date(D.wall0 + s * 1000).toISOString().slice(11, 19);
+  const tok = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const cm = (v, d = 1) => (v == null ? "n/a" : v.toFixed(d) + " cm");
+  const len = (m) => (m >= 100 ? (m / 100).toFixed(1) + " m" : m.toFixed(1) + " cm");
+  const alpha = (hex, a) => {
+    const h = hex.replace("#", "");
+    if (h.length !== 6) return hex;
+    return `rgba(${parseInt(h.slice(0, 2), 16)},${parseInt(h.slice(2, 4), 16)},${parseInt(h.slice(4, 6), 16)},${a})`;
+  };
+  const stateColor = (c) => [tok("--good"), tok("--warn"), tok("--bad"), tok("--recover")][c] || tok("--muted");
+  const DIR = ["#4C72B0", "#DD8452", "#55A868"]; // forward, right, up: the Live tab's colours
+  const REASON_COLOR = {
+    worse_rms_than_last: "--lost", lack_of_translation_variance: "--warn", axis_variance_too_high: "--bad",
+    lack_of_rotational_variance: "--recover", applied: "--good", forced: "--cal", corrected: "--accent",
+  };
+  const pretty = (s) => String(s).replace(/_/g, " ");
+  document.querySelectorAll("[data-g]").forEach((el) => {
+    const v = G[el.dataset.g];
+    el.textContent = v != null ? (v * 100).toFixed(0) + " cm" : "";
+  });
+
+  const config = { displaylogo: false, responsive: true, scrollZoom: false,
+    modeBarButtonsToRemove: ["select2d", "lasso2d", "autoScale2d", "toggleSpikelines", "hoverClosestCartesian", "hoverCompareCartesian"] };
+
+  function base(extra) {
+    const fg = tok("--fg"), grid = tok("--grid"), line = tok("--line");
+    // a fresh object per axis: deepMerge writes into nested objects, and shared ones would leak titles between axes
+    const ax = () => ({ gridcolor: grid, linecolor: line, zerolinecolor: line, tickfont: { family: tok("--font-data"), size: 11, color: tok("--muted") },
+      title: { font: { size: 12, color: tok("--muted") } }, automargin: true });
+    const lay = {
+      paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)",
+      font: { family: tok("--font-body"), size: 13, color: fg },
+      margin: { l: 56, r: 18, t: 10, b: 36 },
+      hoverlabel: { bgcolor: tok("--surface"), bordercolor: line, font: { family: tok("--font-body"), color: fg, size: 13 } },
+      legend: { orientation: "h", x: 0, y: 1.02, yanchor: "bottom", font: { size: 12 }, bgcolor: "rgba(0,0,0,0)" },
+      xaxis: ax(), yaxis: ax(), yaxis2: ax(), yaxis3: ax(), yaxis4: ax(),
+      dragmode: "zoom",
+    };
+    return deepMerge(lay, extra || {});
+  }
+  function deepMerge(a, b) {
+    for (const k of Object.keys(b)) {
+      if (b[k] && typeof b[k] === "object" && !Array.isArray(b[k]) && a[k] && typeof a[k] === "object" && !Array.isArray(a[k])) deepMerge(a[k], b[k]);
+      else a[k] = b[k];
+    }
+    return a;
+  }
+  function vline(x, color, dash, yref, width) {
+    return { type: "line", xref: "x", yref: yref || "paper", x0: x, x1: x, y0: 0, y1: 1, line: { color, width: width || 1, dash: dash || "solid" }, layer: "below" };
+  }
+  function hline(y, color, yref, dash) {
+    return { type: "line", xref: "paper", yref: yref || "y", x0: 0, x1: 1, y0: y, y1: y, line: { color, width: 1, dash: dash || "dash" }, layer: "below" };
+  }
+  function empty(id, text) {
+    document.getElementById(id).innerHTML = `<p class="nochart">${esc(text)}</p>`;
+  }
+
+  // ---- header ----
+  const S = D.stats;
+  document.getElementById("eyebrow").textContent = `SpaceCalibrator518 · session ${D.session}`;
+  document.getElementById("sub").textContent =
+    `${S.start} to ${S.end} (${S.duration}). Black box recording of the guarded calibration, replayed through the guard for the head tracker error.`;
+  const statItems = [
+    [S.head_ok != null ? S.head_ok.toFixed(0) + "%" : "n/a", `of the night the head tracker sat within ${(G.r_ok * 100).toFixed(0)} cm`, S.head_ok != null && S.head_ok < 90 ? "warn" : ""],
+    [S.head_high_min != null ? S.head_high_min.toFixed(1) + " min" : "n/a", `head tracker off by more than ${(G.r_high * 100).toFixed(0)} cm`, S.head_high_min > 5 ? "warn" : ""],
+    [S.head_untrusted || "n/a", S.head_untrusted_replay ? `head tracker not trusted by the live guard (today's guard: ${S.head_untrusted_replay})` : "head tracker not trusted by the live guard", ""],
+    [String(S.glitch_ticks), "ticks flagged as glitches (all devices)", ""],
+    [`${S.cal_applied ?? "n/a"} / ${S.cal_rejected ?? "n/a"}`, "calibrations applied / rejected", ""],
+    [String(S.dropouts ?? 0), "moments where 3+ devices lost tracking together", S.dropouts > 0 ? "warn" : ""],
+  ];
+  document.getElementById("stats").innerHTML = statItems.map(([v, l, c]) => `<div class="stat ${c}"><b>${esc(v)}</b><span>${esc(l)}</span></div>`).join("");
+  document.getElementById("findings").innerHTML = D.findings.map((f) => `<li>${esc(f)}</li>`).join("");
+  document.getElementById("foot").innerHTML = `
+    <div>Generated ${esc(D.generated)} by <code>python -m tools.session_report ${esc(D.session)}</code> from the analysis of
+    <code>tools.analyze_session</code> (glitch check at a ${D.tick_hz} Hz tick, jump limit v_unexplained ${G.v_unexplained} m/s × tick + j_tol ${(G.j_tol * 100).toFixed(0)} cm)
+    and <code>spacecal-replay run --csv</code> for the head tracker. Guard thresholds: r_ok ${(G.r_ok * 100).toFixed(0)} cm, r_high ${(G.r_high * 100).toFixed(0)} cm.</div>
+    <div>Times are the PC's clock. Drag on a chart to zoom, double-click to reset; charts 1 to 4 share their time range.</div>`;
+
+  // ---- linked time axes (charts 1 to 4) ----
+  const linked = ["c-ov", "c-head", "c-cal", "c-heat"];
+  let syncing = false;
+  let sharedRange = null;
+  function hookSync(id) {
+    const gd = document.getElementById(id);
+    if (!gd || gd._synced || !gd.on) return;
+    gd._synced = true;
+    gd.on("plotly_relayout", (ev) => {
+      if (syncing) return;
+      let upd = null;
+      if (ev["xaxis.range[0]"] !== undefined) upd = { "xaxis.range": [ev["xaxis.range[0]"], ev["xaxis.range[1]"]] };
+      else if (ev["xaxis.range"]) upd = { "xaxis.range": ev["xaxis.range"] };
+      else if (ev["xaxis.autorange"]) upd = { "xaxis.range": [W(0), W(D.end)] };
+      if (!upd) return;
+      sharedRange = upd["xaxis.range"];
+      syncing = true;
+      Promise.all(linked.filter((o) => o !== id).map((o) => {
+        const g = document.getElementById(o);
+        return g && g.data ? Plotly.relayout(g, upd) : null;
+      })).finally(() => { syncing = false; });
+      if (ev["xaxis.autorange"]) { syncing = true; Plotly.relayout(gd, upd).finally(() => { syncing = false; }); }
+    });
+  }
+  const xrange = () => sharedRange || [W(0), W(D.end)];
+
+  // ---- 1. overview ----
+  function drawOverview() {
+    const O = D.overview, n = D.devices.length;
+    const yOf = (row) => -row;
+    const EV = 1.3;
+    const traces = [];
+    // lost tracking
+    const lx = [], ly = [], lt = [];
+    O.losses.forEach(([row, a, b, s]) => {
+      const txt = `${devById[D.devices[row].id].label}<br>lost tracking ${s.toFixed(1)} s<br>${clock(a)}`;
+      lx.push(W(a), W((a + b) / 2), W(b), null); ly.push(yOf(row), yOf(row), yOf(row), null); lt.push(txt, txt, txt, null);
+    });
+    traces.push({ x: lx, y: ly, text: lt, mode: "lines", line: { color: tok("--lost"), width: 6 }, name: "lost tracking", hovertemplate: "%{text}<extra></extra>", connectgaps: false });
+    // guard states
+    [1, 2, 3].forEach((st) => {
+      const x = [], y = [], t = [];
+      O.trust.forEach(([row, a, b, code, reason]) => {
+        if (code !== st) return;
+        const txt = `${D.devices[row].label}<br>${STATE_NAMES[st]} for ${(b - a).toFixed(1)} s (${pretty(reason)})<br>${clock(a)}`;
+        x.push(W(a), W((a + b) / 2), W(b), null); y.push(yOf(row) + 0.18, yOf(row) + 0.18, yOf(row) + 0.18, null); t.push(txt, txt, txt, null);
+      });
+      traces.push({ x, y, text: t, mode: "lines", line: { color: stateColor(st), width: 9 }, name: STATE_NAMES[st], hovertemplate: "%{text}<extra></extra>" });
+    });
+    // glitches
+    const gx = [], gy = [], gs = [], gt = [];
+    O.glitches.forEach(([row, s, c, rot, flags]) => {
+      gx.push(W(s)); gy.push(yOf(row) - 0.18);
+      gs.push(Math.max(6, Math.min(18, 6 + 4 * Math.log10(1 + c / 4.67))));
+      gt.push(`${D.devices[row].label}<br>unexplained ${len(c)}, ${rot.toFixed(1)}°<br>${clock(s)} (${pretty(flags)})`);
+    });
+    traces.push({ x: gx, y: gy, text: gt, mode: "markers", marker: { symbol: "x-thin", size: gs, line: { color: tok("--fg"), width: 1.6 } }, name: "glitch flagged", hovertemplate: "%{text}<extra></extra>" });
+    // events row
+    const mx = [], mt = [], mf = [];
+    O.markers.forEach(([s, src]) => { mx.push(W(s)); mt.push(`marker (${esc(src)})<br>${clock(s)}`); mf.push(src !== "auto"); });
+    traces.push({ x: mx, y: mx.map(() => EV), text: mt, mode: "markers", name: "marker",
+      marker: { symbol: mf.map((u) => (u ? "triangle-down" : "triangle-down-open")), size: mf.map((u) => (u ? 12 : 9)), color: tok("--accent"), line: { color: tok("--accent"), width: 1.2 } },
+      hovertemplate: "%{text}<extra></extra>" });
+    const sx = [], st2 = [], ss = [];
+    O.steps.forEach(([s, c, deg, outcome, trig]) => { sx.push(W(s)); ss.push(Math.max(7, Math.min(20, 5 + 5 * Math.log10(1 + c)))); st2.push(`calibration ${outcome} (${pretty(trig)})<br>moved ${len(c)}, ${deg.toFixed(2)}°<br>${clock(s)}`); });
+    traces.push({ x: sx, y: sx.map(() => EV - 0.45), text: st2, mode: "markers", name: "calibration step > 5 cm",
+      marker: { symbol: "diamond", size: ss, color: alpha(tok("--cal"), 0.85), line: { color: tok("--cal"), width: 1 } }, hovertemplate: "%{text}<extra></extra>" });
+    const shapes = [];
+    O.markers.forEach(([s, src]) => { if (src !== "auto") shapes.push(vline(W(s), alpha(tok("--accent"), 0.5), "dot")); });
+    O.steps.forEach(([s, c]) => { if (c >= 10) shapes.push(vline(W(s), alpha(tok("--cal"), 0.35), "solid")); });
+    const lay = base({
+      height: 90 + 38 * (n + 1), margin: { l: 104, r: 14, t: 6, b: 34 }, showlegend: false, shapes, hovermode: "closest",
+      xaxis: { type: "date", range: xrange(), tickformat: "%H:%M" },
+      yaxis: { tickvals: [EV - 0.2].concat(D.devices.map((d, i) => yOf(i))), ticktext: ["events"].concat(D.devices.map((d) => d.label)),
+        range: [-(n - 1) - 0.6, EV + 0.5], fixedrange: true, showgrid: false, zeroline: false, tickfont: { family: tok("--font-body"), size: 12, color: tok("--fg") } },
+    });
+    Plotly.react("c-ov", traces, lay, config).then(() => hookSync("c-ov"));
+    document.getElementById("key-ov").innerHTML =
+      `<span><i style="background:${tok("--lost")}"></i>lost tracking</span>` +
+      [1, 2, 3].map((s) => `<span><i style="background:${stateColor(s)}"></i>${STATE_NAMES[s]}</span>`).join("") +
+      `<span>× glitch flagged</span><span style="color:${tok("--accent")}">▼ marker</span><span style="color:${tok("--cal")}">◆ calibration step</span>`;
+  }
+
+  // ---- 2. head tracker error ----
+  function drawHead() {
+    const H = D.head;
+    if (!H || !H.med) { empty("c-head", "No replay data for the head tracker."); return; }
+    const t = H.med.map((_, i) => W(H.t0 + i));
+    const dt = H.fwd.map((_, i) => W(H.dir_t0 + 10 * i + 5));
+    const acc = tok("--accent");
+    const traces = [
+      { x: t, y: H.max, mode: "lines", line: { color: alpha(acc, 0.35), width: 0.8 }, name: "worst moment of each second", hovertemplate: "%{y:.1f} cm worst<extra></extra>", connectgaps: false },
+      { x: t, y: H.med, mode: "lines", line: { color: acc, width: 1.6 }, name: "30-second median", hovertemplate: "%{y:.1f} cm (30 s median)<extra></extra>", connectgaps: false },
+      { x: dt, y: H.fwd, yaxis: "y2", mode: "lines", line: { color: DIR[0], width: 1.2 }, name: "forward", hovertemplate: "forward %{y:.1f} cm<extra></extra>" },
+      { x: dt, y: H.right, yaxis: "y2", mode: "lines", line: { color: DIR[1], width: 1.2 }, name: "right", hovertemplate: "right %{y:.1f} cm<extra></extra>" },
+      { x: dt, y: H.up, yaxis: "y2", mode: "lines", line: { color: DIR[2], width: 1.2 }, name: "up", hovertemplate: "up %{y:.1f} cm<extra></extra>" },
+    ];
+    const shapes = H.bands.map(([a, b, st]) => ({ type: "rect", xref: "x", yref: "y domain", x0: W(a), x1: W(b), y0: 0, y1: 1, fillcolor: alpha(stateColor(st), 0.16), line: { width: 0 }, layer: "below" }));
+    shapes.push(hline(G.r_ok * 100, alpha(tok("--warn"), 0.9), "y"), hline(G.r_high * 100, alpha(tok("--bad"), 0.9), "y"));
+    shapes.push(hline(0, tok("--line"), "y2", "solid"));
+    const lay = base({
+      height: 470, hovermode: "x unified", shapes,
+      xaxis: { type: "date", range: xrange(), tickformat: "%H:%M", anchor: "y2" },
+      yaxis: { domain: [0.36, 1], title: { text: "error (cm, log)" }, type: "log", range: [-1, Math.log10(Math.max(30, H.ymax))],
+        tickvals: [0.1, 0.3, 1, 3, 10, 30, 100], ticktext: ["0.1", "0.3", "1", "3", "10", "30", "100"] },
+      yaxis2: { domain: [0, 0.27], title: { text: "direction (cm)" }, zeroline: false, range: [-H.dlim, H.dlim] },
+      legend: { y: 1.0, traceorder: "normal" },
+    });
+    Plotly.react("c-head", traces, lay, config).then(() => hookSync("c-head"));
+    const sh = H.share || {};
+    if (sh.ok != null)
+      document.getElementById("cap-head").textContent =
+        `Median ${sh.p50.toFixed(1)} cm, 95% of the time under ${sh.p95.toFixed(1)} cm, worst ${sh.max.toFixed(1)} cm. Under ${(G.r_ok * 100).toFixed(0)} cm ${sh.ok.toFixed(0)}% of the night, over ${(G.r_high * 100).toFixed(0)} cm ${sh.high.toFixed(1)}%.`;
+  }
+
+  function drawViews() {
+    const H = D.head;
+    const ids = { top: "c-top", side: "c-side", back: "c-back" };
+    if (!H || !H.views || !H.views.top) { Object.values(ids).forEach((id) => empty(id, "No data.")); return; }
+    const e = H.edges, c = e.slice(0, -1).map((v, i) => (v + e[i + 1]) / 2);
+    const lim = e[e.length - 1];
+    const axes = { top: ["right (cm)", "forward (cm)", "right", "forward"], side: ["forward (cm)", "up (cm)", "forward", "up"], back: ["right (cm)", "up (cm)", "right", "up"] };
+    const surf = tok("--surface"), acc = tok("--accent"), fg = tok("--fg");
+    const scale = [[0, alpha(acc, 0.08)], [0.35, alpha(acc, 0.45)], [0.75, acc], [1, fg]];
+    for (const k of Object.keys(ids)) {
+      const z = H.views[k].map((row) => row.map((v) => (v > 0 ? Math.log10(v) : null)));
+      const txt = H.views[k].map((row, yi) => row.map((v, xi) =>
+        `${axes[k][2]} ${c[xi].toFixed(1)} cm, ${axes[k][3]} ${c[yi].toFixed(1)} cm<br>${v ? (v / D.tick_hz).toFixed(v / D.tick_hz < 10 ? 1 : 0) + " s here" : "never"}`));
+      const ring = (r, col) => ({ type: "circle", xref: "x", yref: "y", x0: -r, x1: r, y0: -r, y1: r, line: { color: col, width: 1.2, dash: "dash" } });
+      const lay = base({
+        margin: { l: 48, r: 8, t: 4, b: 40 }, showlegend: false, hovermode: "closest",
+        xaxis: { title: { text: axes[k][0] }, range: [-lim, lim], zeroline: true, constrain: "domain" },
+        yaxis: { title: { text: axes[k][1] }, range: [-lim, lim], scaleanchor: "x", scaleratio: 1, zeroline: true, constrain: "domain" },
+        shapes: [ring(G.r_ok * 100, tok("--warn")), ring(G.r_high * 100, tok("--bad"))],
+      });
+      delete lay.height; // the square container sets the size
+      Plotly.react(ids[k], [{ type: "heatmap", x: c, y: c, z, text: txt, hovertemplate: "%{text}<extra></extra>", colorscale: scale, showscale: false, zsmooth: false, hoverongaps: false }], lay, config);
+    }
+  }
+
+  // ---- 3. calibration ----
+  function drawCal() {
+    const C = D.cal;
+    if (!C || !C.t) { empty("c-cal", "No calibration records."); return; }
+    const t = C.t.map(W).concat([W(C.end)]);
+    const ext = (a) => a.concat([a[a.length - 1]]);
+    const traces = [
+      { x: t, y: ext(C.x), mode: "lines", line: { shape: "hv", color: DIR[0], width: 1.3 }, name: "x", hovertemplate: "x %{y:.1f} cm<extra></extra>" },
+      { x: t, y: ext(C.y), mode: "lines", line: { shape: "hv", color: DIR[2], width: 1.3 }, name: "y (up)", hovertemplate: "y %{y:.1f} cm<extra></extra>" },
+      { x: t, y: ext(C.z), mode: "lines", line: { shape: "hv", color: DIR[1], width: 1.3 }, name: "z", hovertemplate: "z %{y:.1f} cm<extra></extra>" },
+      { x: t, y: ext(C.yaw), yaxis: "y2", mode: "lines", line: { shape: "hv", color: tok("--cal"), width: 1.3, dash: "dot" }, name: "yaw (°, right axis)", hovertemplate: "yaw %{y:.2f}°<extra></extra>" },
+    ];
+    const P = C.p;
+    const groups = {};
+    P.t.forEach((s, i) => {
+      if (C.skipped_before != null && s < C.skipped_before - 1) return;
+      const key = P.reason[i];
+      (groups[key] = groups[key] || []).push(i);
+    });
+    const order = ["applied", "forced", "corrected", "worse_rms_than_last", "lack_of_translation_variance", "axis_variance_too_high", "lack_of_rotational_variance"];
+    Object.keys(groups).sort((a, b) => (order.indexOf(a) + 99 * (order.indexOf(a) < 0)) - (order.indexOf(b) + 99 * (order.indexOf(b) < 0))).forEach((key) => {
+      const idx = groups[key];
+      const filled = ["applied", "forced", "corrected"].includes(key);
+      const col = tok(REASON_COLOR[key] || "--muted");
+      traces.push({
+        x: idx.map((i) => W(P.t[i])), y: idx.map((i) => P.cm[i]), yaxis: "y3", mode: "markers",
+        name: filled ? key : "rejected: " + pretty(key),
+        marker: { symbol: filled ? "circle" : "circle-open", size: filled ? 6 : 5, color: col, line: { color: col, width: 1 } },
+        text: idx.map((i) => `${P.outcome[i]} (${pretty(P.trigger[i])})${filled ? "" : ": " + pretty(P.reason[i])}<br>would move ${len(P.cm[i])}, ${P.deg[i].toFixed(2)}°<br>RMS ${P.rms[i].toFixed(1)} mm · ${clock(P.t[i])}`),
+        hovertemplate: "%{text}<extra></extra>",
+      });
+    });
+    const lay = base({
+      height: 520, hovermode: "closest",
+      xaxis: { type: "date", range: xrange(), tickformat: "%H:%M", anchor: "y3" },
+      yaxis: { domain: [0.5, 1], title: { text: "offset vs median (cm)" } },
+      yaxis2: { overlaying: "y", side: "right", title: { text: "yaw (°)" }, showgrid: false, zeroline: false },
+      yaxis3: { domain: [0, 0.4], type: "log", title: { text: "change proposed (cm)" }, range: [-1.3, Math.log10(C.p_ymax || 50)] },
+      legend: { y: 1.0 },
+      shapes: [hline(5, alpha(tok("--cal"), 0.5), "y3", "dot")], // shapes take data values, also on log axes
+    });
+    Plotly.react("c-cal", traces, lay, config).then(() => hookSync("c-cal"));
+    if (C.skipped_before != null)
+      document.getElementById("cap-cal").textContent =
+        `What the solver applied, and what it proposed and rejected. Starts with the first applied calibration (${clock(C.skipped_before)}); the dotted line in the lower part marks 5 cm.`;
+  }
+
+  // ---- 4. heatmap ----
+  let heatMode = "lost";
+  function drawHeat() {
+    const M = D.heat;
+    if (!M || !M.n) { empty("c-heat", "No per-minute data."); return; }
+    const x = Array.from({ length: M.n }, (_, i) => W(M.m0 + 60 * i + 30));
+    const rows = D.devices.map((d) => d.label);
+    const lost = M.track.map((r) => r.map((v) => (v == null ? null : 100 - v)));
+    const z = heatMode === "lost" ? lost : M.glitch;
+    const text = D.devices.map((d, i) => x.map((_, j) => {
+      const tr = M.track[i][j];
+      if (tr == null) return `${d.label} · ${clock(M.m0 + 60 * j).slice(0, 5)}<br>no data`;
+      return `${d.label} · ${clock(M.m0 + 60 * j).slice(0, 5)}<br>tracking ${tr}% · ${M.glitch[i][j]} glitch tick(s)` +
+        (M.height[i][j] != null ? `<br>height ${M.height[i][j].toFixed(2)} m · speed ${M.speed[i][j].toFixed(2)} m/s` : "");
+    }));
+    const calm = alpha(tok("--accent"), 0.07);
+    const scale = heatMode === "lost"
+      ? [[0, calm], [0.02, alpha(tok("--warn"), 0.55)], [0.25, tok("--warn")], [1, tok("--bad")]]
+      : [[0, calm], [0.1, alpha(tok("--warn"), 0.6)], [0.5, tok("--warn")], [1, tok("--bad")]];
+    let zmax = 50;
+    if (heatMode !== "lost") {
+      const all = M.glitch.flat().filter((v) => v > 0).sort((a, b) => a - b);
+      zmax = Math.max(4, all.length ? all[Math.floor(all.length * 0.98)] : 4);
+    }
+    const lay = base({
+      height: 80 + 30 * rows.length, margin: { l: 104, r: 14, t: 6, b: 34 }, hovermode: "closest",
+      xaxis: { type: "date", range: xrange(), tickformat: "%H:%M" },
+      yaxis: { autorange: "reversed", fixedrange: true, tickfont: { family: tok("--font-body"), size: 12, color: tok("--fg") }, showgrid: false },
+    });
+    Plotly.react("c-heat", [{
+      type: "heatmap", x, y: rows, z, text, hovertemplate: "%{text}<extra></extra>", colorscale: scale, zmin: 0, zmax, xgap: 0, ygap: 2,
+      colorbar: { title: { text: heatMode === "lost" ? "lost %" : "glitches", font: { size: 11, color: tok("--muted") } }, thickness: 10, len: 0.9, tickfont: { size: 10, color: tok("--muted") }, outlinewidth: 0 },
+      hoverongaps: false,
+    }], lay, config).then(() => hookSync("c-heat"));
+  }
+  function setHeat(mode) {
+    heatMode = mode;
+    document.getElementById("heat-lost").setAttribute("aria-pressed", String(mode === "lost"));
+    document.getElementById("heat-glitch").setAttribute("aria-pressed", String(mode !== "lost"));
+    drawHeat();
+  }
+  document.getElementById("heat-lost").addEventListener("click", () => setHeat("lost"));
+  document.getElementById("heat-glitch").addEventListener("click", () => setHeat("glitch"));
+
+  // ---- 5. incidents ----
+  let incIndex = 0;
+  function drawIncidentChips() {
+    const box = document.getElementById("inc-chips");
+    if (!D.incidents.length) { box.innerHTML = '<p class="nochart">Nothing stood out enough to pick.</p>'; return; }
+    box.innerHTML = D.incidents.map((inc, i) =>
+      `<button type="button" class="chip" data-i="${i}" aria-pressed="${i === incIndex}"><time>${esc(inc.clock)}</time>${esc(inc.title)}</button>`).join("");
+    box.querySelectorAll(".chip").forEach((b) => b.addEventListener("click", () => {
+      incIndex = Number(b.dataset.i);
+      box.querySelectorAll(".chip").forEach((o) => o.setAttribute("aria-pressed", String(o === b)));
+      drawIncident();
+    }));
+  }
+  // a single wild sample (tracking lost) should not flatten the rest: cap at the 99th percentile
+  function headTop(inc) {
+    const v = ((inc.head && inc.head.err) || []).filter((x) => x != null).sort((a, b) => a - b);
+    if (!v.length) return G.r_high * 150;
+    return Math.max(G.r_high * 130, Math.min(v[v.length - 1], v[Math.floor(v.length * 0.99)] * 1.3));
+  }
+  function drawIncident() {
+    const inc = D.incidents[incIndex];
+    if (!inc) { empty("c-inc", ""); return; }
+    document.getElementById("inc-facts").innerHTML = inc.facts.map((f) => `<li>${esc(f)}</li>`).join("");
+    const traces = [], shapes = [];
+    const fmtS = (s) => (s >= 0 ? "+" : "") + s.toFixed(1) + " s";
+    // events strip (y4)
+    const ex = [], ey = [], et = [], es = [], ec = [];
+    (inc.trust || []).forEach(([s, label, from, to, reason]) => {
+      ex.push(s); ey.push(0); es.push("triangle-up"); ec.push(stateColor(["TRUSTED", "SUSPECT", "UNTRUSTED", "RECOVERING"].indexOf(to)));
+      et.push(`${fmtS(s)} ${esc(label)}: ${from.toLowerCase()} > ${to.toLowerCase()} (${pretty(reason)})`);
+    });
+    (inc.cal || []).forEach(([s, outcome, c, deg, trig, err]) => {
+      const ok = ["applied", "forced", "corrected"].includes(outcome);
+      ex.push(s); ey.push(1); es.push(ok ? "diamond" : "diamond-open"); ec.push(ok ? tok("--cal") : tok("--muted"));
+      et.push(`${fmtS(s)} calibration ${outcome} (${pretty(trig)})${ok ? "" : ": " + pretty(err)}<br>${ok ? "moved" : "would move"} ${len(c)}, ${deg.toFixed(2)}°`);
+      if (ok && c >= 1) shapes.push(vline(s, alpha(tok("--cal"), 0.6), "solid", "paper"));
+    });
+    (inc.markers || []).forEach(([s, src]) => {
+      ex.push(s); ey.push(2); es.push("triangle-down"); ec.push(tok("--accent")); et.push(`${fmtS(s)} marker (${esc(src)})`);
+      shapes.push(vline(s, alpha(tok("--accent"), 0.6), "dot", "paper"));
+    });
+    traces.push({ x: ex, y: ey, yaxis: "y4", mode: "markers", marker: { symbol: es, color: ec, size: 10, line: { color: ec, width: 1.2 } }, text: et, hovertemplate: "%{text}<extra></extra>", showlegend: false });
+    // head tracker error (y3)
+    if (inc.head) {
+      traces.push({ x: inc.head.x, y: inc.head.err, yaxis: "y3", mode: "lines", line: { color: tok("--accent"), width: 1.5 }, name: "head tracker error", hovertemplate: "%{x:+.2f} s: %{y:.1f} cm<extra>head tracker</extra>", connectgaps: false });
+      let cur = null;
+      inc.head.state.forEach((st, i) => {
+        const x = inc.head.x[i];
+        if (st !== 0) { if (cur && cur[2] === st) cur[1] = x; else { if (cur) shapes.push(cur); cur = [x, x, st]; } }
+        else if (cur) { shapes.push(cur); cur = null; }
+      });
+      if (cur) shapes.push(cur);
+      for (let i = 0; i < shapes.length; i++) {
+        const s = shapes[i];
+        if (Array.isArray(s)) shapes[i] = { type: "rect", xref: "x", yref: "y3 domain", x0: s[0], x1: s[1] + 0.034, y0: 0, y1: 1, fillcolor: alpha(stateColor(s[2]), 0.2), line: { width: 0 }, layer: "below" };
+      }
+      shapes.push(hline(G.r_ok * 100, alpha(tok("--warn"), 0.9), "y3"), hline(G.r_high * 100, alpha(tok("--bad"), 0.9), "y3"));
+    }
+    // devices: unexplained step (y2) and height (y)
+    (inc.devices || []).forEach((dv) => {
+      const d = devById[dv.id];
+      if (!d) return;
+      if (dv.ux.length) traces.push({ x: dv.ux, y: dv.u, yaxis: "y2", mode: "lines", line: { color: d.color, width: 1.1 }, name: d.label, legendgroup: d.label, hovertemplate: `${esc(d.label)} %{x:+.2f} s: %{y:.1f} cm unexplained<extra></extra>`, connectgaps: false });
+      if (dv.hx.length) traces.push({ x: dv.hx, y: dv.h, yaxis: "y", mode: "lines", line: { color: d.color, width: 1.3 }, name: d.label, legendgroup: d.label, showlegend: !dv.ux.length, hovertemplate: `${esc(d.label)} %{x:+.2f} s: %{y:.2f} m<extra></extra>`, connectgaps: false });
+    });
+    const limit = D.tuning.limit_cm;
+    shapes.push(hline(limit, alpha(tok("--bad"), 0.8), "y2")); // shapes take data values, also on log axes
+    const lay = base({
+      height: 640, hovermode: "closest", shapes,
+      xaxis: { range: [inc.w0, inc.w1], title: { text: `seconds around ${inc.clock}` }, zeroline: true, zerolinecolor: alpha(tok("--fg"), 0.35), anchor: "y" },
+      yaxis4: { domain: [0.9, 1], range: [-0.7, 2.7], tickvals: [0, 1, 2], ticktext: ["guard", "calibration", "marker"], fixedrange: true, showgrid: false, zeroline: false, tickfont: { family: tok("--font-body"), size: 11 } },
+      yaxis3: { domain: [0.64, 0.86], title: { text: "head error (cm)" }, range: [0, headTop(inc)] },
+      yaxis2: { domain: [0.33, 0.6], type: "log", title: { text: "unexplained (cm)" }, range: [-1, Math.log10(Math.max(limit * 4, ...(inc.devices || []).flatMap((d) => d.u.filter((v) => v != null)), 1)) + 0.15] },
+      yaxis: { domain: [0, 0.29], title: { text: "height (m)" } },
+      legend: { y: -0.12, yanchor: "top" },
+      margin: { l: 70, r: 14, t: 6, b: 90 },
+    });
+    if (!(inc.devices || []).length) lay.annotations = [{ xref: "paper", yref: "paper", x: 0.5, y: 0.3, showarrow: false, text: "device traces not available in this report", font: { color: tok("--muted") } }];
+    Plotly.react("c-inc", traces, lay, config);
+  }
+
+  // ---- 6. tuning ----
+  function drawTuning() {
+    const T = D.tuning;
+    const one = (id, key, unit, limit) => {
+      const series = T[key];
+      if (!series || !series.length) { empty(id, "No histogram data."); return; }
+      const traces = series.map((s) => {
+        const d = devById[s.id];
+        return { x: s.x, y: s.y, mode: "lines", line: { color: d ? d.color : tok("--muted"), width: d && d.id === D.target ? 2.4 : 1.4, shape: "hv" }, name: d ? d.label : String(s.id),
+          hovertemplate: `${esc(d ? d.label : s.id)}<br>allowance %{x:.3g} ${unit}: %{y:.3g} flags per hour<extra></extra>` };
+      });
+      const lay = base({
+        height: 380, hovermode: "closest", margin: { l: 60, r: 10, t: 6, b: 44 },
+        xaxis: { type: "log", title: { text: `${key === "pos" ? "v_unexplained" : "rot_unexplained_dps"} allowance (${unit})` } },
+        yaxis: { type: "log", title: { text: "flags per hour" } },
+        shapes: [vline(limit, alpha(tok("--bad"), 0.9), "dash", "paper", 1.5)], // shapes take data values; annotations below take log10
+        annotations: [{ x: Math.log10(limit), y: 1, xref: "x", yref: "paper", text: `now ${limit} ${unit}`, showarrow: false, xanchor: "left", yanchor: "top", xshift: 4, font: { size: 11, color: tok("--bad") } }],
+        legend: { y: -0.22, yanchor: "top" },
+      });
+      lay.margin.b = 110;
+      lay.height = 430;
+      Plotly.react(id, traces, lay, config);
+    };
+    one("c-tpos", "pos", "m/s", T.v_limit);
+    one("c-trot", "rot", "°/s", T.rot_limit);
+    document.getElementById("lim-pos").textContent = `${T.v_limit} m/s, a jump limit of ${T.limit_cm.toFixed(1)} cm at ${D.tick_hz} Hz`;
+    document.getElementById("tol-pos").textContent = `j_tol (${T.j_tol_cm} cm)`;
+    document.getElementById("tol-rot").textContent = `${T.rot_tol}°`;
+  }
+
+  // ---- help popovers: hover on desktop, tap on touch ----
+  document.querySelectorAll(".info").forEach((b) => {
+    const pop = document.getElementById(b.getAttribute("aria-controls"));
+    b.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const open = !pop.classList.contains("open");
+      document.querySelectorAll(".pop.open").forEach((p) => p.classList.remove("open"));
+      pop.classList.toggle("open", open);
+      b.setAttribute("aria-expanded", String(open));
+    });
+  });
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest(".pop")) document.querySelectorAll(".pop.open").forEach((p) => p.classList.remove("open"));
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") document.querySelectorAll(".pop.open").forEach((p) => p.classList.remove("open"));
+  });
+
+  function drawAll() {
+    if (!window.Plotly) {
+      ["c-ov", "c-head", "c-cal", "c-heat", "c-inc", "c-tpos", "c-trot", "c-top", "c-side", "c-back"].forEach((id) => empty(id, "The chart library did not load."));
+      return;
+    }
+    drawOverview(); drawHead(); drawViews(); drawCal(); drawHeat(); drawIncident(); drawTuning();
+  }
+  drawIncidentChips();
+  drawAll();
+  // the theme can change while the page is open
+  const mq = window.matchMedia("(prefers-color-scheme: dark)");
+  if (mq.addEventListener) mq.addEventListener("change", drawAll);
+  new MutationObserver(drawAll).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+})();
+</script>

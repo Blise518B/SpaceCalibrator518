@@ -1,0 +1,28 @@
+{
+  "default_bindings": [
+    { "controller_type": "knuckles", "binding_url": "bindings_knuckles.json" },
+    { "controller_type": "oculus_touch", "binding_url": "bindings_oculus_touch.json" },
+    { "controller_type": "vive_controller", "binding_url": "bindings_vive_controller.json" },
+    { "controller_type": "holographic_controller", "binding_url": "bindings_generic.json" },
+    { "controller_type": "generic", "binding_url": "bindings_generic.json" }
+  ],
+  "actions": [
+    { "name": "/actions/spacecal/in/hold_recalibrate_left", "type": "boolean", "requirement": "optional" },
+    { "name": "/actions/spacecal/in/hold_recalibrate_right", "type": "boolean", "requirement": "optional" },
+    { "name": "/actions/spacecal/out/haptic_left", "type": "vibration", "requirement": "optional" },
+    { "name": "/actions/spacecal/out/haptic_right", "type": "vibration", "requirement": "optional" }
+  ],
+  "action_sets": [
+    { "name": "/actions/spacecal", "usage": "leftright" }
+  ],
+  "localization": [
+    {
+      "language_tag": "en_US",
+      "/actions/spacecal": "Space Calibrator 518",
+      "/actions/spacecal/in/hold_recalibrate_left": "Hold to recalibrate (left trigger)",
+      "/actions/spacecal/in/hold_recalibrate_right": "Hold to recalibrate (right trigger)",
+      "/actions/spacecal/out/haptic_left": "Haptic feedback (left)",
+      "/actions/spacecal/out/haptic_right": "Haptic feedback (right)"
+    }
+  ]
+}

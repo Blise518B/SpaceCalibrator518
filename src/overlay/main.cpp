@@ -5,6 +5,14 @@
 #include "window.h"
 #include "platform.h"
 #include "configuration.h"
+#include "guard/live_stats.h"
+#include "guard/guard_ui.h"
+#include "guard/event_marker.h"
+#include "guard/guard_config.h"
+#include "guard/housekeeping.h"
+#include "guard/trigger_hold.h"
+#include "recorder/recorder_host.h"
+#include "trust/trust_manager.h"
 #include "calibration.h"
 #include "localisation.h"
 #include "vr_core.h"
@@ -33,6 +41,9 @@ void args_parse(int argc, char* argv[], spacecal::renderer::GraphicsBackend* ren
 {
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
+        if (arg == "--live-demo") {
+            spacecal::guard::g_liveDemo = true; // fork: made-up data in the Live tab (guard/live_demo.cpp)
+        }
         if (arg == "--renderer" && (i + 1 < argc) && renderer) {
             std::string selectedApi = argv[i + 1];
             if (selectedApi == "opengl" || selectedApi == "opengles" || selectedApi == "gl" || selectedApi == "gles") {
@@ -87,12 +98,30 @@ int entry_point(int argc, char* argv[])
     spacecal::LocalisationManager localisationManager;
     localisationManager.init();
 
+    // fork: guard.json + event markers (docs/DESIGN.md)
+    spacecal::guard::GuardConfigManager guardConfigManager;
+    guardConfigManager.init();
+    spacecal::guard::EventMarker eventMarker;
+    eventMarker.init();
+    spacecal::guard::LiveStats liveStats; // fork: Live tab history, fed by the trust layer and the solver
+    liveStats.init();
+    spacecal::trust::TrustManager trustManager;
+    trustManager.init();
+    spacecal::recorder::RecorderHost recorderHost; // attaches to the driver's pose ring from the main loop
+    const bool bLiveDemo = spacecal::guard::g_liveDemo; // fork: made-up Live data, no SteamVR and no recording
+    if (!bLiveDemo)
+        recorderHost.init();
+    spacecal::guard::TriggerHold triggerHold; // initialised after SteamVR is up (see below)
+
     // Initialise base station management
     spacecal::bluetooth::init_base_station_management();
 
     // Init SteamVR
     spacecal::VRState vrState;
-    if (!vrState.init()) {
+    if (bLiveDemo) {
+        vrState.initOffline();
+        LOG_INFO("Live demo: SteamVR is not started, the Live tab shows made-up data");
+    } else if (!vrState.init()) {
         // @TODO: Present error to user in friendly way
         LOG_CRITICAL("Failed to initialise VRState D:");
     } else {
@@ -100,6 +129,8 @@ int entry_point(int argc, char* argv[])
             vr::EVRSettingsError vrErr = vr::EVRSettingsError::VRSettingsError_None;
             bool bEnableBaseStationMgmt = vr::VRSettings()->GetBool(vr::k_pch_Lighthouse_Section, vr::k_pch_Lighthouse_EnableBluetooth_Bool, &vrErr);
         }
+        vrState.registerSteamVrApplication(); // fork: own SteamVR app that starts with SteamVR (before the action manifest)
+        triggerHold.init(); // fork: needs SteamVR
     }
 
     spacecal::Window* theWindow = new spacecal::Window;
@@ -133,8 +164,11 @@ int entry_point(int argc, char* argv[])
     }
 
     LOG_INFO("Started Space Calibrator Nova!");
+    if (!bLiveDemo)
+        spacecal::guard::startGlitchCollection(); // fork: finished sessions -> blackbox/glitches, in the background
 
     theWindow->RunLoop();
+    recorderHost.shutdown(); // fork: flush the recording while everything it reads is still alive
 
     // close window and save settings to disk
     theWindow->Shutdown();

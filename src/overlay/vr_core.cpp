@@ -9,6 +9,7 @@
 #include "util.h"
 
 BEGIN_EXTERNAL_HEADERS
+#include <chrono>
 #include <filesystem>
 #include <fmt/format.h>
 #include <glaze/glaze.hpp>
@@ -44,6 +45,15 @@ constexpr const char* k_VIRTUAL_DESKTOP_HMD_NAMES[] = {
 constexpr const char* k_VIRTUAL_DESKTOP_SERIAL_NUMBER = "1PASH5D1P17365";
 
 VRState* VRState::s_instance = nullptr;
+
+bool VRState::initOffline()
+{
+    if (s_instance != nullptr)
+        return false;
+    s_instance = this;
+    m_bIsSteamVrAvailable = false;
+    return true;
+}
 
 bool VRState::init()
 {
@@ -748,6 +758,81 @@ bool VRState::removeConflictingDrivers()
         return false;
     }
     return bSuccess;
+}
+
+// fork: this install is its own SteamVR application (manifest.vrmanifest next to the exe, key
+// c_FORK_OPENVR_APPLICATION_KEY), so SteamVR starts it together with itself. The only switch is
+// SteamVR's own autolaunch flag (startup overlay apps in the SteamVR settings); the Guard tab shows
+// and changes that same flag. The first registration turns it on (tools\install_common.ps1 does the
+// same while SteamVR is closed, so the very next SteamVR start already launches the overlay).
+bool VRState::registerSteamVrApplication()
+{
+    vr::IVRApplications* apps = vr::VRApplications();
+    if (!m_bIsSteamVrAvailable || !apps)
+        return false;
+    const char* key = c_FORK_OPENVR_APPLICATION_KEY;
+    std::error_code ec;
+    const std::filesystem::path exeDir = platform::getExeDir();
+    const std::filesystem::path manifest = exeDir / "manifest.vrmanifest";
+    if (!std::filesystem::is_regular_file(manifest, ec)) {
+        LOG_WARNING("SteamVR app: no manifest at {}, not registered", manifest.string());
+        return false;
+    }
+
+    // registered from another folder (an older build, a moved install): SteamVR would start that one
+    if (apps->IsApplicationInstalled(key)) {
+        char dir[1024] = {};
+        vr::EVRApplicationError err = vr::VRApplicationError_None;
+        apps->GetApplicationPropertyString(key, vr::VRApplicationProperty_WorkingDirectory_String, dir, sizeof(dir), &err);
+        if (err == vr::VRApplicationError_None && dir[0] != '\0' && !std::filesystem::equivalent(std::filesystem::path(dir), exeDir, ec)) {
+            const std::string old = (std::filesystem::path(dir) / "manifest.vrmanifest").string();
+            const vr::EVRApplicationError removeErr = apps->RemoveApplicationManifest(old.c_str());
+            LOG_INFO("SteamVR app: {} was registered from {}, replacing it ({})", key, dir, apps->GetApplicationsErrorNameFromEnum(removeErr));
+        }
+    }
+
+    if (!apps->IsApplicationInstalled(key)) {
+        const vr::EVRApplicationError err = apps->AddApplicationManifest(manifest.string().c_str(), false);
+        if (err != vr::VRApplicationError_None) {
+            LOG_WARNING("SteamVR app: registering {} failed: {}", manifest.string(), apps->GetApplicationsErrorNameFromEnum(err));
+            return false;
+        }
+        const vr::EVRApplicationError autoErr = apps->SetApplicationAutoLaunch(key, true);
+        LOG_INFO("SteamVR app: registered {} from {}, starts with SteamVR ({})", key, manifest.string(), apps->GetApplicationsErrorNameFromEnum(autoErr));
+    }
+    m_bRegisteredWithSteamVr = true;
+    m_bLaunchesWithSteamVr = apps->GetApplicationAutoLaunch(key);
+
+    // a process SteamVR did not start itself (a launcher, explorer) would run as system.generated.spacecalibrator.exe
+    const vr::EVRApplicationError idErr = apps->IdentifyApplication(0, key);
+    LOG_INFO("SteamVR app: running as {} ({}), starts with SteamVR: {}", key, apps->GetApplicationsErrorNameFromEnum(idErr), m_bLaunchesWithSteamVr ? "yes" : "no");
+    return true;
+}
+
+bool VRState::launchesWithSteamVr()
+{
+    vr::IVRApplications* apps = vr::VRApplications();
+    if (!m_bRegisteredWithSteamVr || !apps)
+        return false;
+    // the flag can also be changed in SteamVR's settings; read it again at most once a second
+    const double now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    if (now - m_launchFlagReadAt >= 1.0) {
+        m_launchFlagReadAt = now;
+        m_bLaunchesWithSteamVr = apps->GetApplicationAutoLaunch(c_FORK_OPENVR_APPLICATION_KEY);
+    }
+    return m_bLaunchesWithSteamVr;
+}
+
+bool VRState::setLaunchWithSteamVr(bool launch)
+{
+    vr::IVRApplications* apps = vr::VRApplications();
+    if (!m_bRegisteredWithSteamVr || !apps)
+        return false;
+    const vr::EVRApplicationError err = apps->SetApplicationAutoLaunch(c_FORK_OPENVR_APPLICATION_KEY, launch);
+    m_bLaunchesWithSteamVr = apps->GetApplicationAutoLaunch(c_FORK_OPENVR_APPLICATION_KEY);
+    m_launchFlagReadAt = -1.0;
+    LOG_INFO("SteamVR app: start with SteamVR set to {} ({})", launch ? "on" : "off", apps->GetApplicationsErrorNameFromEnum(err));
+    return err == vr::VRApplicationError_None;
 }
 
 bool VRState::registerSpaceCalibratorDriver()

@@ -1,4 +1,8 @@
 #include "calibration.h"
+#include "guard/calibration_record.h" // fork
+#include "guard/guard_config.h" // fork
+#include "guard/trigger_hold.h" // fork
+#include "trust/trust_manager.h" // fork
 #include "config/configuration_data_versions.h"
 #include "configuration.h"
 #include "constants.h"
@@ -27,6 +31,8 @@ static const CalibrationErrorMapping c_calibrationErrorMapping[] = {
     { CalibrationError::AxisVarianceTooHigh, "axis variance being too high", "calibration_error_axis_variance_too_high" },
     { CalibrationError::WorseAxisVarianceThanLast, "worse axis variance than the last attempt", "calibration_error_worse_axis_variance_than_last" },
     { CalibrationError::BadRelativeCalibration, "bad relative calibration", "calibration_error_bad_relative_calibration" },
+    { CalibrationError::DeviceUntrusted, "head tracker not trusted (fork trust layer)", "calibration_error_device_untrusted" }, // fork
+    { CalibrationError::WaitingForTriggers, "waiting for both triggers to be held", "calibration_error_waiting_for_triggers" }, // fork
 };
 
 CalibrationErrorMapping getCalibrationErrorMapping(CalibrationError eCalibrationError)
@@ -293,6 +299,18 @@ CalibrationError TrackingSystemCalibration::computeCalibrationOneshot(double cur
 {
     auto startTime = std::chrono::high_resolution_clock::now();
 
+    // fork: while the head tracker is in doubt nothing is solved and, more importantly, nothing
+    // of the good history is touched (checkWorldFromDriverJump-style clearing would lose it)
+    trust::TrustManager* trustManager = trust::TrustManager::getInstance();
+    const bool trustRecovering = trustManager && trustManager->isRecovering(*this);
+    guard::CalibrationAttempt attempt(*this, bForceCalibration); // fork: black-box record of this attempt
+    if (!bForceCalibration && trustManager && trustManager->shouldRejectSamples(*this)) {
+        // deliberately without touching `calibrationError`: the applied calibration stays valid and
+        // active, it is only not updated
+        attempt.skipped(m_samples.size());
+        return CalibrationError::DeviceUntrusted;
+    }
+
     // @TODO: do NOT apply until we are certain this is a better calibration.
 
     // we clear calibration history if the calibration was invalid for a long time. this is to prevent a deadlock.
@@ -325,6 +343,7 @@ CalibrationError TrackingSystemCalibration::computeCalibrationOneshot(double cur
         Eigen::Vector3d _posOffset_temp = Eigen::Vector3d::Zero();
         validateCalibration(calibratedRotation, calibratedTranslation, m_lastRmsError, _posOffset_temp, isRelativeCalibration);
     }
+    attempt.setPrevious(m_lastRmsError, m_lastAxisVariance); // fork
 
     double rmsError = 0.0;
     Eigen::Vector3d posOffset = Eigen::Vector3d::Zero();
@@ -347,6 +366,25 @@ CalibrationError TrackingSystemCalibration::computeCalibrationOneshot(double cur
 
     if (eCalibrationError == CalibrationError::None && (isRelativeCalibration && !makeCalibrationLocal(computedRotation, computedTranslation))) {
         eCalibrationError = CalibrationError::BadRelativeCalibration;
+    }
+
+    // fork: optional 1.5.1 behaviour, continuous updates only while both triggers are held. Checked
+    // before the recovery report so that "not held" never counts as a failed recovery solve.
+    const bool waitingForTriggers = eCalibrationError == CalibrationError::None && !bForceCalibration && isContinuousCalibration()
+        && guard::GuardConfigManager::getInstance() && guard::GuardConfigManager::getInstance()->get().triggers.apply_only_while_held
+        && guard::TriggerHold::getInstance() && !guard::TriggerHold::getInstance()->bothHeld();
+
+    // fork: a recovery solve is applied only when it agrees with the frozen calibration
+    if (trustRecovering && !bForceCalibration && !waitingForTriggers) {
+        const bool solveValid = eCalibrationError == CalibrationError::None;
+        const bool agrees = solveValid && trustManager->recoverySolveAgrees(computedRotation, computedTranslation, isRelativeCalibration);
+        trustManager->reportRecoverySolve(solveValid, agrees);
+        if (!agrees) {
+            eCalibrationError = CalibrationError::DeviceUntrusted;
+        }
+    }
+    if (waitingForTriggers) {
+        eCalibrationError = CalibrationError::WaitingForTriggers;
     }
 
     // @TODO: calibration metrics
@@ -376,11 +414,14 @@ CalibrationError TrackingSystemCalibration::computeCalibrationOneshot(double cur
 
         apply();
         CalibrationManager::getInstance()->saveConfig();
+        if (bForceCalibration && guard::TriggerHold::getInstance())
+            guard::TriggerHold::getInstance()->notifyForcedSolveApplied(currentTime); // fork
     } else {
         // @TODO: propagate rejection reason to UI to provide user with feedback on how to improve calibration
         std::string calibErrString = getCalibrationErrorMapping(eCalibrationError).szLogString;
         LOG_CALIB_WARN("Rejecting calibration due to {}; RMS: {}", calibErrString, rmsError);
     }
+    attempt.finished(static_cast<uint8_t>(eCalibrationError), bApplied, rmsError, axisVariance, computedRotation, computedTranslation, m_samples.size()); // fork
 
     return eCalibrationError;
 }
@@ -636,6 +677,11 @@ Sample_t TrackingSystemCalibration::collectSample(double currentTime) const
         }
     }
 
+    // fork: no samples from a head tracker the trust layer doubts
+    if (bIsTrackingOk && trust::TrustManager::getInstance() && trust::TrustManager::getInstance()->shouldRejectSamples(*this)) {
+        bIsTrackingOk = false;
+    }
+
     if (!bIsTrackingOk) {
         return Sample_t { .isPoseValid = bIsTrackingOk };
     }
@@ -838,8 +884,10 @@ void TrackingSystemCalibration::calibrationTick(const double currentTime)
 
     // detect playspace jumps and try auto-correcting for it.
     if (autoFixPlayspaceJumps) {
+        guard::CalibrationAttempt jumpFix(*this, false, static_cast<uint8_t>(blackbox::CalibrationTrigger::WORLD_FROM_DRIVER_JUMP)); // fork
         if (checkWorldFromDriverJump()) {
             apply();
+            jumpFix.corrected(); // fork
         }
     }
 
@@ -1000,7 +1048,13 @@ void TrackingSystemCalibration::calibrationTick(const double currentTime)
             break;
         }
         case CalibrationState::CONTINUOUS: {
-            if (computeCalibrationOneshot(currentTime, m_shouldForceCalibrateNextTime) == CalibrationError::None) {
+            // fork: the startup force does not override a valid stored calibration (guard.json startup.keep_stored_calibration)
+            bool bForce = m_shouldForceCalibrateNextTime;
+            if (bForce && forkForceTrigger == static_cast<uint8_t>(blackbox::CalibrationTrigger::STARTUP) && isValidCalibration()
+                && guard::GuardConfigManager::getInstance() && guard::GuardConfigManager::getInstance()->get().startup.keep_stored_calibration) {
+                bForce = false;
+            }
+            if (computeCalibrationOneshot(currentTime, bForce) == CalibrationError::None) {
                 LOG_CALIB_INFO("Finished continuous calibration, profile saved");
             }
 
@@ -1188,6 +1242,16 @@ void TrackingSystemCalibration::resetCalibrationForDevice(const CalibrationDevic
 // applies calibration to all devices under this tracking system
 void TrackingSystemCalibration::apply()
 {
+    applyTransforms(true);
+}
+
+void TrackingSystemCalibration::applyQuiet()
+{
+    applyTransforms(false);
+}
+
+void TrackingSystemCalibration::applyTransforms(bool log)
+{
     // check if the hmd and tracker are both valid before applying a calibration. if one of them is invalid we shouldnt trust the calibration as its most likely stale anyway
     bool calibrationDevicesAreValid = targetDevice.deviceId < vr::k_unMaxTrackedDeviceCount && referenceDevice.deviceId < vr::k_unMaxTrackedDeviceCount;
     if (referenceDevice.deviceId < vr::k_unMaxTrackedDeviceCount) {
@@ -1221,7 +1285,11 @@ void TrackingSystemCalibration::apply()
         return;
     }
 
-    LOG_CALIB_INFO("Applying calibration...");
+    if (log)
+        LOG_CALIB_INFO("Applying calibration...");
+    std::vector<ipc::protocol::Command_SetDeviceTransform_t> batch;
+    const bool relative = isContinuousCalibration() && isRelativeCalibration;
+    auto* trustManager = trust::TrustManager::getInstance();
     for (vr::TrackedDeviceIndex_t i = 0; i < vr::k_unMaxTrackedDeviceCount; i++) {
         auto device = VRState::getInstance()->getVrDevice(i);
         if (device.eDeviceClass != vr::TrackedDeviceClass_Invalid) {
@@ -1235,11 +1303,27 @@ void TrackingSystemCalibration::apply()
             args.unTargetOpenVrDeviceId = i;
             args.enabled(true);
 
-            LOG_CALIB_INFO("  applying device [{}]: class: {} connected: {} role: {} tracking: {} model: {} serial: {} idx: {}", i, device.eDeviceClass, device.bIsConnected, device.eControllerRole, device.szTrackingSystemId, device.szModel, device.szSerial, device.dwDeviceIndex);
+            if (log)
+                LOG_CALIB_INFO("  applying device [{}]: class: {} connected: {} role: {} tracking: {} model: {} serial: {} idx: {}", i, device.eDeviceClass, device.bIsConnected, device.eControllerRole, device.szTrackingSystemId, device.szModel, device.szSerial, device.dwDeviceIndex);
             args.quirks = ipc::protocol::DeviceQuirks_t::QUIRK_NONE;
 
-            args.translation = eigenAsVrVec3d(calibratedTranslation);
-            args.rotation = eigenAsVrQuat(calibratedRotation);
+            // fork: SteamVR moved the base station this device is tracked from (trust/frame_corrector.h):
+            // the device gets the calibration plus its own pin
+            Eigen::Quaterniond rotation = calibratedRotation;
+            Eigen::Vector3d translation = calibratedTranslation;
+            if (!relative && trustManager && i < 64) {
+                const Eigen::Isometry3d pin = trustManager->devicePin(static_cast<uint8_t>(i));
+                if (!pin.isApprox(Eigen::Isometry3d::Identity(), 1e-12)) {
+                    Eigen::Isometry3d c = Eigen::Isometry3d::Identity();
+                    c.linear() = calibratedRotation.normalized().toRotationMatrix();
+                    c.translation() = calibratedTranslation;
+                    c = c * pin;
+                    rotation = Eigen::Quaterniond(c.linear()).normalized();
+                    translation = c.translation();
+                }
+            }
+            args.translation = eigenAsVrVec3d(translation);
+            args.rotation = eigenAsVrQuat(rotation);
             args.scale = calibratedScale;
 
             // for relative calibrations
@@ -1251,10 +1335,13 @@ void TrackingSystemCalibration::apply()
             // should only apply to hmd tracker (eg head tracker)
             args.hideContinuousTracker(isContinuousCalibration() && hideContinuousTracker && i == targetDevice.deviceId);
             args.lerpCalibrations(isContinuousCalibration());
+            args.holdRelative(trust::TrustManager::getInstance() && trust::TrustManager::getInstance()->shouldHold(*this)); // fork
 
-            CalibrationManager::getInstance()->m_ipcClient.SetDeviceTransform(args);
+            batch.push_back(args);
         }
     }
+    if (!batch.empty())
+        CalibrationManager::getInstance()->m_ipcClient.SetDeviceTransforms(batch.data(), batch.size());
 }
 
 CalibrationManager::CalibrationManager()
@@ -1353,6 +1440,10 @@ void CalibrationManager::calibrationTick(const double currentTime)
 
     m_ipcClient.RequestVirtualDesktopProps();
     m_ipcClient.PollPoses();
+
+    if (trust::TrustManager::getInstance())
+        trust::TrustManager::getInstance()->tick(currentTime); // fork: decide trust before the solvers run
+    m_ipcClient.PumpQueue(); // fork: markers / trust records / recorder params, one slot at a time
 
     double wantedInterval = 0;
     size_t countedCalibrations = 0;

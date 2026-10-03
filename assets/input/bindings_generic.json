@@ -1,0 +1,19 @@
+{
+  "action_manifest_version": 0,
+  "alias_info": {},
+  "bindings": {
+    "/actions/spacecal": {
+      "haptics": [
+        { "output": "/actions/spacecal/out/haptic_left", "path": "/user/hand/left/output/haptic" },
+        { "output": "/actions/spacecal/out/haptic_right", "path": "/user/hand/right/output/haptic" }
+      ],
+      "sources": [
+        { "inputs": { "click": { "output": "/actions/spacecal/in/hold_recalibrate_left" } }, "mode": "button", "path": "/user/hand/left/input/trigger" },
+        { "inputs": { "click": { "output": "/actions/spacecal/in/hold_recalibrate_right" } }, "mode": "button", "path": "/user/hand/right/input/trigger" }
+      ]
+    }
+  },
+  "controller_type": "generic",
+  "description": "Space Calibrator 518: hold both triggers to recalibrate",
+  "name": "Space Calibrator 518 default (generic)"
+}

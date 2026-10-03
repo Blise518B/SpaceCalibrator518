@@ -1,0 +1,6 @@
+# Python tooling for the fork (black-box reader, plots, replay helpers).
+# Install into the project venv:  .venv\Scripts\python -m pip install -r tools\requirements.txt
+numpy>=1.26
+pandas>=2.1
+matplotlib>=3.8
+pytest>=8.0

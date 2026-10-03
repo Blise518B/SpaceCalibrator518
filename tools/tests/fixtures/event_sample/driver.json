@@ -1,0 +1,13 @@
+{
+  "format": "spacecal-blackbox-event",
+  "version": "v-test",
+  "session_id": "64b2dd5c",
+  "source": "hotkey",
+  "label": 7,
+  "t_mark_mono": 2472.414950,
+  "t_mark_unix": 1789724828.431,
+  "t_start_mono": 2470.414950,
+  "t_end_mono": 2474.414950,
+  "incomplete": false,
+  "chunks": ["64b2dd5c_000000.scb", "64b2dd5c_000001.scb", "64b2dd5c_000002.scb", "64b2dd5c_000003.scb", "64b2dd5c_000004.scb"]
+}

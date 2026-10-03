@@ -1,5 +1,6 @@
 #pragma once
 
+#include "pose_ring.h"
 #include "ipc_server.h"
 #include "latency_estimator.h"
 #include <Eigen/Geometry>
@@ -42,6 +43,13 @@ public:
     void SetAlignmentSpeedParams(ipc::protocol::Command_SetAlignmentSpeedParams_t& params);
     void HandleQuirks(ipc::protocol::DeviceQuirks_t quirks, vr::DriverPose_t& pose);
 
+    // fork: records published into the pose ring (docs/DESIGN.md section 13)
+    struct RecordedTransform_t {
+        bool valid = false;
+        double trans[3] = {};
+        double quat[4] = {}; // w x y z
+    };
+
     [[nodiscard]] inline bool IsDeviceIndexValid(const vr::TrackedDeviceIndex_t index) const
     {
         return index < vr::k_unMaxTrackedDeviceCount && index != vr::k_unTrackedDeviceIndexInvalid && index != vr::k_unTrackedDeviceIndexOther;
@@ -73,6 +81,15 @@ private:
     DeviceCalibration_t m_cachedCalibrations[vr::k_unMaxTrackedDeviceCount] = {}; // cache of calibrations for relative calibration
     vr::DriverPose_t m_poses[vr::k_unMaxTrackedDeviceCount] = {}; // raw poses
     LatencyEstimator m_latencyEstimator;
+
+    // fork: pose ring publisher
+    void recordWorldFromDriverIfChanged(vr::TrackedDeviceIndex_t device, const vr::DriverPose_t& pose, double t);
+    void recordAppliedIfChanged(vr::TrackedDeviceIndex_t device, const vr::HmdQuaternion_t& rot, const vr::HmdVector3d_t& pos, uint8_t deltaSize, double scale, double t);
+    void recordConnectionIfChanged(vr::TrackedDeviceIndex_t device, const vr::DriverPose_t& pose, double t);
+    blackbox::PoseRingWriter m_poseRing;
+    std::atomic<uint8_t> m_lastConnected[vr::k_unMaxTrackedDeviceCount] {}; // 0 no, 1 yes, 255 not seen yet
+    RecordedTransform_t m_lastRecordedWorldFromDriver[vr::k_unMaxTrackedDeviceCount] = {};
+    RecordedTransform_t m_lastRecordedApplied[vr::k_unMaxTrackedDeviceCount] = {};
     friend class ipc::Server;
 };
 }

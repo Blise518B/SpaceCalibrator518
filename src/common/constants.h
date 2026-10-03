@@ -3,7 +3,10 @@
 namespace spacecal {
 
 constexpr const char* c_LEGACY_OPENVR_APPLICATION_KEY = "pushrax.SpaceCalibrator";
-constexpr const char* c_OPENVR_APPLICATION_KEY = "steam.overlay.3368750";
+constexpr const char* c_OPENVR_APPLICATION_KEY = "steam.overlay.3368750"; // dashboard overlay key (upstream)
+// fork: this install's SteamVR application key (manifest.vrmanifest). The Steam release keeps
+// steam.overlay.3368750; SteamVR keeps only the first manifest it reads for one key.
+constexpr const char* c_FORK_OPENVR_APPLICATION_KEY = "blise518b.spacecalibrator518";
 constexpr const char* c_SPACE_CALIBRATOR_STEAM_APP_ID = "3368750";
 constexpr const char* c_STEAMVR_STEAM_APP_ID = "250820";
 

@@ -1,4 +1,7 @@
 #include "window.h"
+#include "guard/event_marker.h" // fork
+#include "guard/trigger_hold.h" // fork
+#include "recorder/recorder_host.h" // fork
 #include "log.h"
 #include "platform.h"
 #include "renderer/renderer.h"
@@ -16,6 +19,7 @@
 #include <imgui/imgui_internal.h>
 
 #if OS_WINDOWS
+#include "resource.h" // fork: IDI_SPACECALIBRATOR
 #include <dwmapi.h>
 #endif
 
@@ -32,6 +36,28 @@ const bool EnableDarkModeTopBar(const HWND windowHwmd)
     const BOOL darkBorder = TRUE;
     return SUCCEEDED(DwmSetWindowAttribute(windowHwmd, DWMA_USE_IMMERSIVE_DARK_MODE, &darkBorder, sizeof(darkBorder)))
         || SUCCEEDED(DwmSetWindowAttribute(windowHwmd, DWMA_USE_IMMERSIVE_DARK_MODE_PRE_20H1, &darkBorder, sizeof(darkBorder)));
+}
+
+// fork: window, taskbar and Alt-Tab icons from the exe's multi-size icon resource. The single 256 px
+// PNG handed to glfwSetWindowIcon left the taskbar on GLFW's class icon (the generic application icon),
+// so the window could not be told apart from other apps.
+bool SetWindowIconsFromResource(const HWND windowHwnd)
+{
+    const HINSTANCE instance = GetModuleHandleW(nullptr);
+    const int bigSize = GetSystemMetrics(SM_CXICON);
+    const int smallSize = GetSystemMetrics(SM_CXSMICON);
+    const HICON bigIcon = static_cast<HICON>(LoadImageW(instance, MAKEINTRESOURCEW(IDI_SPACECALIBRATOR), IMAGE_ICON, bigSize, bigSize, LR_DEFAULTCOLOR));
+    const HICON smallIcon = static_cast<HICON>(LoadImageW(instance, MAKEINTRESOURCEW(IDI_SPACECALIBRATOR), IMAGE_ICON, smallSize, smallSize, LR_DEFAULTCOLOR));
+    if (bigIcon) {
+        SetClassLongPtrW(windowHwnd, GCLP_HICON, reinterpret_cast<LONG_PTR>(bigIcon));
+        SendMessageW(windowHwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(bigIcon));
+    }
+    if (smallIcon) {
+        SetClassLongPtrW(windowHwnd, GCLP_HICONSM, reinterpret_cast<LONG_PTR>(smallIcon));
+        SendMessageW(windowHwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(smallIcon));
+    }
+    LOG_INFO("Window icons from the exe resource: big {} px {}, small {} px {}", bigSize, bigIcon ? "set" : "missing", smallSize, smallIcon ? "set" : "missing");
+    return bigIcon != nullptr && smallIcon != nullptr;
 }
 #endif
 
@@ -64,7 +90,7 @@ bool Window::CreateNativeWindow(renderer::GraphicsBackend gfxApi)
     m_graphicsContext->enableRendererGlfwHints();
     glfwWindowHint(GLFW_RESIZABLE, false);
 
-    m_glfwWindow = glfwCreateWindow(m_windowWidth, m_windowHeight, "Space Calibrator", nullptr, nullptr);
+    m_glfwWindow = glfwCreateWindow(m_windowWidth, m_windowHeight, "Space Calibrator 518", nullptr, nullptr); // fork: own name, see SpaceCalibrator.rc
     if (!m_glfwWindow) {
         LOG_FATAL("Failed to create GLFW window");
         platform::showMessageDialog("An error occured initialising Space Calibrator Nova", "Failed to create GLFW window");
@@ -88,7 +114,7 @@ bool Window::CreateNativeWindow(renderer::GraphicsBackend gfxApi)
 
     // set debug string if necessary
 #if _DEBUG
-    std::string szDebugTitle = fmt::format("Space Calibrator - {}", k_GRAPHICS_API_STRINGS[(uint32_t)gfxApi]);
+    std::string szDebugTitle = fmt::format("Space Calibrator 518 - {}", k_GRAPHICS_API_STRINGS[(uint32_t)gfxApi]);
     glfwSetWindowTitle(m_glfwWindow, szDebugTitle.c_str());
 #endif
 
@@ -101,11 +127,22 @@ bool Window::CreateNativeWindow(renderer::GraphicsBackend gfxApi)
 #endif
 
     // Load icon and set it in the window
-    GLFWimage images[1] = {};
-    std::string iconPath = (platform::getExeDir() / "taskbar_icon.png").string();
-    images[0].pixels = stbi_load(iconPath.c_str(), &images[0].width, &images[0].height, 0, 4);
-    glfwSetWindowIcon(m_glfwWindow, 1, images);
-    stbi_image_free(images[0].pixels);
+#if OS_WINDOWS
+    const bool bIconFromResource = SetWindowIconsFromResource(windowHwnd); // fork
+#else
+    const bool bIconFromResource = false;
+#endif
+    if (!bIconFromResource) {
+        GLFWimage images[1] = {};
+        std::string iconPath = (platform::getExeDir() / "taskbar_icon.png").string();
+        images[0].pixels = stbi_load(iconPath.c_str(), &images[0].width, &images[0].height, 0, 4);
+        if (images[0].pixels) {
+            glfwSetWindowIcon(m_glfwWindow, 1, images);
+            stbi_image_free(images[0].pixels);
+        } else {
+            LOG_WARN("Couldn't load the window icon from {}", iconPath);
+        }
+    }
 
     ImGui::CreateContext();
     ImPlot::CreateContext();
@@ -349,6 +386,12 @@ void Window::RunLoop()
         double time = glfwGetTime();
         VRState::getInstance()->updateVrState();
         CalibrationManager::getInstance()->calibrationTick(time);
+        if (recorder::RecorderHost::getInstance())
+            recorder::RecorderHost::getInstance()->tick(time); // fork: pose ring -> black box
+        if (guard::EventMarker::getInstance())
+            guard::EventMarker::getInstance()->tick(time); // fork: hotkey + deferred event bookkeeping
+        if (guard::TriggerHold::getInstance())
+            guard::TriggerHold::getInstance()->tick(time); // fork: both-triggers hold
 
         bool dashboardVisible = false;
         int width = 0, height = 0;
@@ -372,7 +415,7 @@ void Window::RunLoop()
             } else if (!io.WantTextInput) {
                 // User might close the keyboard without hitting Done, so we unset the flag to allow it to open again.
                 bKeyboardOpen = false;
-            } else if (io.WantTextInput && !bKeyboardOpen && !bKeyboardJustClosed) {
+            } else if (io.WantTextInput && !bKeyboardOpen && !bKeyboardJustClosed && dashboardVisible) {
                 int id = ImGui::GetActiveID();
                 auto textInfo = ImGui::GetInputTextState(id);
 

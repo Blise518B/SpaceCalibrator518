@@ -2,6 +2,8 @@
 #include "calibration.h"
 #include "log.h"
 #include "vr_core.h"
+#include <chrono>
+#include <thread>
 
 
 namespace ipc {
@@ -72,6 +74,8 @@ bool IpcClient::Connect()
     ipc_client_dispatch_function(m_hIpc, protocol::IPC_COMMAND_HANDSHAKE, &handshakeArgs, sizeof(handshakeArgs));
 
     m_connected = m_hIpc != k_hInvalidIpcHandle;
+    if (m_connected)
+        m_connectCount++;
 
     LOG_IPC_INFO("IPC connection established: {}", m_connected);
 
@@ -90,6 +94,15 @@ void IpcClient::SetDeviceTransform(protocol::Command_SetDeviceTransform_t device
         LOG_IPC_ERROR("Tried updating device transform buffer, but operation is invalid!");
     }
 }
+void IpcClient::SetDeviceTransforms(const protocol::Command_SetDeviceTransform_t* transforms, size_t count)
+{
+    for (size_t i = 0; i < count; i++)
+        if (transforms[i].unTargetOpenVrDeviceId < vr::k_unMaxTrackedDeviceCount)
+            m_transforms[transforms[i].unTargetOpenVrDeviceId] = transforms[i];
+    if (!ipc_server_write_shared_memory(m_hIpc, m_deviceTransformOperation, m_transforms, sizeof(m_transforms))) {
+        LOG_IPC_ERROR("Tried updating device transform buffer, but operation is invalid!");
+    }
+}
 void IpcClient::SetAlignmentSpeed(protocol::Command_SetAlignmentSpeedParams_t alignmentParams)
 {
     ipc_client_dispatch_function(m_hIpc, protocol::IPC_COMMAND_SET_ALIGNMENT_SPEED_PARAMS, &alignmentParams, sizeof(alignmentParams));
@@ -102,6 +115,36 @@ void IpcClient::RequestVirtualDesktopProps()
 {
     if (spacecal::VRState::getInstance()->isHmdVirtualDesktop()) {
         ipc_client_dispatch_function(m_hIpc, protocol::IPC_COMMAND_REQUEST_VIRTUAL_DESKTOP_PROPS, nullptr, 0);
+    }
+}
+void IpcClient::Enqueue(protocol::CommandType_t type, const void* data, size_t size)
+{
+    if (m_queue.size() > 256) {
+        LOG_IPC_WARN("IPC command queue full, dropping command {}", static_cast<int>(type));
+        return;
+    }
+    QueuedCommand q;
+    q.type = type;
+    q.payload.assign(reinterpret_cast<const uint8_t*>(data), reinterpret_cast<const uint8_t*>(data) + size);
+    m_queue.push_back(std::move(q));
+}
+void IpcClient::PumpQueue(int maxPerCall)
+{
+    if (!m_connected)
+        return;
+    for (int i = 0; i < maxPerCall && !m_queue.empty(); i++) {
+        if (!ipc_client_is_idle(m_hIpc)) {
+            // the driver has not consumed the previous command yet; try again next frame
+            return;
+        }
+        QueuedCommand& q = m_queue.front();
+        ipc_client_dispatch_function(m_hIpc, q.type, q.payload.data(), q.payload.size());
+        m_queue.pop_front();
+        // give the driver thread a moment before the next one (it wakes within microseconds; this
+        // keeps two fork commands in one frame from racing)
+        for (int spin = 0; spin < 200 && !ipc_client_is_idle(m_hIpc); spin++) {
+            std::this_thread::sleep_for(std::chrono::microseconds(50));
+        }
     }
 }
 void IpcClient::PollPoses()

@@ -69,6 +69,8 @@ enum class CalibrationError : uint8_t {
     AxisVarianceTooHigh, // the axis variance was unacceptably high
     WorseAxisVarianceThanLast, // the axis variance was worse than the last calibration attempt
     BadRelativeCalibration, // maths fucked up, try again soz
+    DeviceUntrusted, // fork: the head tracker is SUSPECT/UNTRUSTED, or a recovery solve disagreed with the frozen calibration
+    WaitingForTriggers, // fork: "apply only while both triggers are held" is on and they are not
     Unknown,
 };
 
@@ -156,6 +158,8 @@ public:
     void calibrationTick(const double currentTime);
     void resetCalibrationForDevice(const CalibrationDevice& device); // resets the given device's pose to the raw pose
     void apply(); // applies the calibration to the VR runtime
+    void applyQuiet(); // fork: the same without the log lines (per-device frame pins, trust/frame_corrector.h)
+    void applyTransforms(bool log);
 
     // finds the device id given props, if and only if device id is invalid
     void assignTarget(CalibrationDevice& device);
@@ -221,6 +225,7 @@ public:
     double calibratedScale = 1.0;
 
     double wantedUpdateInterval = 1.0;
+    uint8_t forkForceTrigger = 3; // fork: blackbox::CalibrationTrigger of the next forced solve (3 = STARTUP, set by whoever forces)
 
     CalibrationErrorMetrics errorMetrics = {};
 

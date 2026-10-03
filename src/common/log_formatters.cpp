@@ -27,8 +27,17 @@ auto fmtquill::formatter<ipc::protocol::Version_t>::format(ipc::protocol::Versio
     case ipc::protocol::IPC_PROTOCOL_VER_5:
         versionStr = "IPC_PROTOCOL_VER_5";
         break;
+    case ipc::protocol::IPC_PROTOCOL_VER_6: // fork
+        versionStr = "IPC_PROTOCOL_VER_6";
+        break;
+    case ipc::protocol::IPC_PROTOCOL_VER_7: // fork
+        versionStr = "IPC_PROTOCOL_VER_7";
+        break;
+    case ipc::protocol::IPC_PROTOCOL_VER_8: // fork
+        versionStr = "IPC_PROTOCOL_VER_8";
+        break;
     default:
-        versionStr = fmtquill::format("IPC_PROTOCOL_VER_UNK_", (uint32_t)version);
+        versionStr = fmtquill::format("IPC_PROTOCOL_VER_UNK_{}", (uint32_t)version);
         break;
     }
     return formatter<string_view>::format(versionStr, ctx);

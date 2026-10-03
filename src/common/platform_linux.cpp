@@ -226,6 +226,15 @@ void launchWebpage(const std::string& szUrl)
     spawnProcess("xdg-open", { szUrl }, false, true);
 }
 
+void* raiseOwnWindowForInput()
+{
+    return nullptr;
+}
+
+void restoreForegroundWindow(void*)
+{
+}
+
 void setThreadName(const std::string& threadName)
 {
     // thread name has max 16 chars

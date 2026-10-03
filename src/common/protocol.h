@@ -109,8 +109,11 @@ enum Version_t {
     IPC_PROTOCOL_VER_3,
     IPC_PROTOCOL_VER_4,
     IPC_PROTOCOL_VER_5,
+    IPC_PROTOCOL_VER_6, // fork: black-box recorder + event markers (docs/DESIGN.md)
+    IPC_PROTOCOL_VER_7, // fork: keep-all session archive, calibration records
+    IPC_PROTOCOL_VER_8, // fork: thin driver; the recorder lives in the overlay and reads the pose ring (pose_ring.h)
 
-    IPC_PROTOCOL_CURRENT = IPC_PROTOCOL_VER_5,
+    IPC_PROTOCOL_CURRENT = IPC_PROTOCOL_VER_8,
 };
 
 enum CommandType_t : uint8_t {
@@ -119,6 +122,12 @@ enum CommandType_t : uint8_t {
     IPC_COMMAND_SET_ALIGNMENT_SPEED_PARAMS,
     IPC_COMMAND_RESET_CALIBRATION,
     IPC_COMMAND_REQUEST_VIRTUAL_DESKTOP_PROPS,
+    // fork additions (keep appended so upstream ids stay stable). Retired in VER_8, when the
+    // recorder moved into the overlay; the ids stay reserved.
+    IPC_COMMAND_MARK_EVENT,
+    IPC_COMMAND_SET_BLACKBOX_PARAMS,
+    IPC_COMMAND_RECORD_TRUST,
+    IPC_COMMAND_RECORD_CALIBRATION,
     IPC_COMMAND_COUNT,
 };
 
@@ -182,6 +191,7 @@ public:
     FLAG(hideContinuousTracker, 0b00000100)
     FLAG(relativeCoordSystem, 0b00001000) // the calibration values are interpreted as relative to the hmd if this is set
     FLAG(calibrateMotionVecs, 0b00010000) // the calibration will be applied to velocity, angular velocity, acceleration and angular acceleration as well for improved accuracy
+    FLAG(holdRelative, 0b00100000) // fork: keep the cached relative correction instead of recomputing it from the (untrusted) head tracker
 #undef FLAG
 };
 

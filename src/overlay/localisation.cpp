@@ -5,6 +5,8 @@
 #include "util.h"
 
 #include <errno.h>
+#include <mutex> // fork: warn once per missing string
+#include <unordered_set>
 
 BEGIN_EXTERNAL_HEADERS
 #include <filesystem>
@@ -92,7 +94,12 @@ std::string LocalisationManager::getString(const std::string& input) const
         return m_localisedStrings.at(input);
     }
 
-    LOG_WARN("String \"{0}\" was not defined in a localisation file. Falling back to input key.", input.c_str());
+    // fork: once per key; a missing key drawn every frame wrote 60 lines a second (2026-10-02)
+    static std::mutex s_warnedLock;
+    static std::unordered_set<std::string> s_warned;
+    std::lock_guard<std::mutex> lock(s_warnedLock);
+    if (s_warned.insert(input).second)
+        LOG_WARN("String \"{0}\" was not defined in a localisation file. Falling back to input key.", input.c_str());
 
     return input;
 }

@@ -30,6 +30,9 @@ project("SpaceCalibrator")
 # 3rd party stuff
 add_subdirectory ("vendor")
 
+# fork: optional tests (see tests/CMakeLists.txt)
+option(SPACECAL_BUILD_TESTS "Build the fork's test executables" OFF)
+
 # warnings for our code
 if ("${CMAKE_CXX_COMPILER}" MATCHES "Clang" OR "${CMAKE_C_COMPILER_ID}" STREQUAL "Clang")
 	# add_compile_options(-Werror=return-type -Wall -Wextra -Wpedantic /MP)
@@ -89,3 +92,8 @@ endif()
 
 # Include project
 add_subdirectory ("src")
+
+# fork: tests
+if (SPACECAL_BUILD_TESTS)
+	add_subdirectory ("tests")
+endif()

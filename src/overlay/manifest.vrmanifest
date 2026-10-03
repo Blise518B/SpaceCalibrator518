@@ -1,15 +1,16 @@
 {
 	"source" : "builtin",
 	"applications": [{
-		"app_key": "steam.overlay.3368750",
+		"app_key": "blise518b.spacecalibrator518",
 		"launch_type": "binary",
 		"binary_path_windows": "SpaceCalibrator.exe",
 		"is_dashboard_overlay": true,
+		"image_path": "icon.png",
 
 		"strings": {
 			"en_us": {
-				"name": "Space Calibrator",
-				"description": "Space Calibrator Overlay"
+				"name": "Space Calibrator 518",
+				"description": "Glitch-robust Space Calibrator (SpaceCalibrator518)"
 			}
 		}
 	}]

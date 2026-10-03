@@ -90,6 +90,12 @@ void launchWebpage(const std::string& szUrl);
 
 void setThreadName(const std::string& threadName);
 
+// fork: brings this process's main window to the front with the keyboard focus (a marker note after
+// the hotkey). Returns the window that had the focus before, for restoreForegroundWindow; nullptr when
+// nothing changed (already in front, no window, or Windows refused and the taskbar button flashes).
+void* raiseOwnWindowForInput();
+void restoreForegroundWindow(void* previous);
+
 // utf8 stuff for imgui -> overlay -> os interop
 
 }

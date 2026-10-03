@@ -21,6 +21,8 @@ struct VRDevice_t {
 class VRState {
 public:
     bool init();
+    // fork: --live-demo, no VR_Init (which would start SteamVR), everything behaves as if SteamVR were missing
+    bool initOffline();
 
     // called every frame, updates m_aDevices and m_aTrackingSystems
     void updateVrState();
@@ -45,6 +47,11 @@ public:
     bool isSpaceCalibratorDriverAvailable();
     bool removeConflictingDrivers();
     bool registerSpaceCalibratorDriver();
+
+    // fork: this install as its own SteamVR application that starts with SteamVR (vr_core.cpp)
+    bool registerSteamVrApplication();
+    [[nodiscard]] bool launchesWithSteamVr();
+    bool setLaunchWithSteamVr(bool launch);
 
 private:
     bool updateSteamVRDevice(const vr::TrackedDeviceIndex_t deviceId);
@@ -74,6 +81,9 @@ private:
     std::vector<std::string> m_aTrackingSystems;
 
     OpenVRPaths m_openvrPaths;
+    bool m_bRegisteredWithSteamVr = false;
+    bool m_bLaunchesWithSteamVr = false;
+    double m_launchFlagReadAt = -1.0;
 
     friend class ::ipc::IpcClient; // for m_hmdMetadata
 };

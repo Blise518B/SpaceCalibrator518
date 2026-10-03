@@ -10,3 +10,13 @@ ipch
 [bB]in_linux64
 [bB]in_linuxaarch64
 [oO]ut
+# fork (SpaceCalibrator518)
+.venv/
+bin-tests/
+dist/
+release/
+logs/
+build-*/
+__pycache__/
+.pytest_cache/
+*.pyc

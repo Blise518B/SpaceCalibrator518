@@ -33,4 +33,4 @@
 	url = https://github.com/simpleble/simpleble
 [submodule "vendor/implot3d"]
 	path = vendor/implot3d
-	url = git@github.com:brenocq/implot3d.git
+	url = https://github.com/brenocq/implot3d.git

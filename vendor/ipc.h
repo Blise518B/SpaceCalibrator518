@@ -82,6 +82,9 @@ bool ipc_client_shutdown(IpcHandle_t* hIpcClient);
 /* Invokes a function from the client with id unCmdType with arguments pArgs */
 bool ipc_client_dispatch_function(IpcHandle_t hIpcClient, IpcCommandType_t unCmdType, void* pArgs, size_t dwArgsSize);
 
+/* fork: true when the server has consumed the last dispatched command (the command slot is free).
+   Dispatching while it is false overwrites the pending command. */
+bool ipc_client_is_idle(IpcHandle_t hIpcClient);
 /* Registers the IpcOperation with the IpcServer. Must be invoked before you can use read/write shared memory. */
 bool ipc_server_register_operation(IpcHandle_t hIpcServer, IpcOperation_t* ipcOperation);
 /* Writes the given memory into the shared memory at the provided offset. Think of this as a memcpy with extra steps. */
@@ -559,6 +562,25 @@ bool ipc_client_dispatch_function(IpcHandle_t hIpcClient, IpcCommandType_t unCmd
 #endif
 
     return true;
+}
+
+bool ipc_client_is_idle(IpcHandle_t hIpcClient) {
+    if (hIpcClient == k_hInvalidIpcHandle) {
+        return false;
+    }
+    __internal__IpcHandle_t* handleInternal = (__internal__IpcHandle_t*)hIpcClient;
+#if IPC_OS_WIN32
+    // the server resets the (manual-reset) event once it has run the callback
+    return WaitForSingleObject((HANDLE)handleInternal->hNativeEvent, 0) == WAIT_TIMEOUT;
+#elif IPC_OS_LINUX
+    int value = 0;
+    if (sem_getvalue((sem_t*)handleInternal->hNativeEvent, &value) != 0) {
+        return false;
+    }
+    return value == 0;
+#else
+#error "Unsupported platform"
+#endif
 }
 
 bool ipc_server_register_operation(IpcHandle_t hIpcServer, IpcOperation_t* ipcOperation) {
