@@ -242,6 +242,62 @@ TEST(a_lagging_device_does_not_move_the_reference_back)
     CHECK((r.fc.global().matrix() - delta.inverse().matrix()).norm() < 1e-9);
 }
 
+TEST(the_head_tracker_switching_onto_a_station_that_moves_in_the_same_frame_leaves_no_offset)
+{
+    // 2026-10-04 02:13:11: the head tracker changed onto a station in the very frame SteamVR moved
+    // that station by 10 cm; the trackers on it reported the old map for a few more ms. The first
+    // version took the old map back as the reference, and every device stayed 9 cm off.
+    const Eigen::Isometry3d I = Eigen::Isometry3d::Identity();
+    Room r = makeRoom();
+    r.devs[0].W = k_STATION_B; // the head tracker on station B first, the trackers 13 and 14 on A
+    r.truth[0] = k_STATION_B;
+    for (int i = 0; i < 5; i++)
+        r.tick();
+    CHECK_EQ(r.count(FrameEventKind::REFERENCE_SWITCHED), 1);
+    const Eigen::Isometry3d g = r.fc.global();
+    const Eigen::Isometry3d delta = iso(0.09, 0.03, -0.02, 2.4);
+    r.devs[0].W = delta * k_STATION_A; // station A moved on the map, the head tracker is on it now
+    r.truth[0] = k_STATION_A;
+    r.tick();
+    CHECK(r.fc.pin(r.devs[0].index).isApprox(I, 1e-9));
+    const Eigen::Vector3d before1 = r.stable(1);
+    r.devs[1].W = delta * k_STATION_A; // the trackers take the new map one tick later
+    r.devs[2].W = delta * k_STATION_A;
+    r.tick();
+    CHECK_NEAR((r.stable(1) - before1).norm(), 0.0, k_SLIDE_TICK); // no jump
+    CHECK_EQ(r.count(FrameEventKind::REFERENCE_MOVED), 0);
+    CHECK_EQ(r.count(FrameEventKind::REFERENCE_SWITCHED), 2);
+    CHECK((r.fc.global().matrix() - g.matrix()).norm() < 1e-12); // the calibration is not touched
+    for (int i = 0; i < 90 * 20; i++) {
+        r.tick();
+        CHECK(r.fc.pin(r.devs[0].index).isApprox(I, 1e-9)); // the head tracker is shown where the solver has it
+    }
+    for (size_t i = 1; i < 3; i++)
+        CHECK(r.fc.pin(r.devs[i].index).isApprox(I, 1e-6)); // slid onto the head tracker's map: no offset
+}
+
+TEST(a_station_move_that_reaches_the_trackers_first_is_the_fix_once_the_head_tracker_shows_it)
+{
+    Room r = makeRoom();
+    const Eigen::Isometry3d delta = iso(0.07, 0.0, 0.03, 0.8);
+    std::vector<Eigen::Vector3d> before;
+    for (size_t i = 0; i < 3; i++)
+        before.push_back(r.stable(i));
+    r.devs[1].W = delta * k_STATION_A;
+    r.devs[2].W = delta * k_STATION_A;
+    r.tick();
+    CHECK_EQ(r.count(FrameEventKind::REFERENCE_MOVED), 0); // only the head tracker moves the reference
+    CHECK_NEAR((r.stable(1) - before[1]).norm(), 0.0, 1e-9); // held in the head tracker's version
+    r.devs[0].W = delta * k_STATION_A;
+    r.tick();
+    CHECK_EQ(r.count(FrameEventKind::REFERENCE_MOVED), 1);
+    CHECK((r.fc.global().matrix() - delta.inverse().matrix()).norm() < 1e-9);
+    for (size_t i = 0; i < 3; i++) {
+        CHECK_NEAR((r.stable(i) - before[i]).norm(), 0.0, 1e-9);
+        CHECK(r.fc.pin(r.devs[i].index).isApprox(Eigen::Isometry3d::Identity(), 1e-9));
+    }
+}
+
 TEST(back_from_a_loss_a_device_is_on_steamvrs_map)
 {
     Room r = makeRoom();

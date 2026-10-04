@@ -22,10 +22,12 @@
 //    corrections never pile up. The device's own motion always passes through unchanged.
 //  * Back from a loss of tracking (> lost_after): Q is SteamVR's map again.
 // SteamVR's map is pinned at the reference family, the station frame the head tracker is tracked
-// from: G = S_r * W_ref^-1, W_ref the latest frame of that family seen on a tracking device (base
-// station records run ahead: a station version may never be adopted by any device). G is the
-// calibration fix (C_new = C_old * delta^-1 when the reference family moves by delta), and the
-// driver adds pin(d) = G^-1 * Q_d on top of the calibration for each device.
+// from: G = S_r * W_ref^-1, W_ref the head tracker's own version of that frame (not the base
+// station's record, which runs ahead and may never be adopted by any device, and not another
+// device's version: the solver calibrates against the head tracker's raw poses, so its pin must
+// stay identity). G is the calibration fix (C_new = C_old * delta^-1 when the head tracker's
+// version moves by delta), and the driver adds pin(d) = G^-1 * Q_d on top of the calibration for
+// each device; a device on another version of the head tracker's station is held in its version.
 //
 // Pure logic (Eigen only): the overlay feeds it from the driver's pose buffer, the replay tool and
 // the tests from recordings. Validated on a four-hour recording of 2026-10-02: frame
@@ -115,7 +117,6 @@ private:
 
     [[nodiscard]] bool same(const Eigen::Isometry3d& a, const Eigen::Isometry3d& b) const;
     [[nodiscard]] bool sameFamily(const Eigen::Isometry3d& a, const Eigen::Isometry3d& b) const;
-    [[nodiscard]] bool knownReferenceVersion(const Eigen::Isometry3d& w) const;
     [[nodiscard]] Eigen::Isometry3d target(const Device& d) const;
 
     FrameParams m_params;
@@ -123,8 +124,7 @@ private:
     bool m_haveRef = false;
     bool m_correcting = false;
     Eigen::Isometry3d m_Sr = Eigen::Isometry3d::Identity(); // the reference family's frame in the stable world
-    Eigen::Isometry3d m_Wref = Eigen::Isometry3d::Identity(); // its latest version seen on a tracking device
-    std::vector<Eigen::Isometry3d> m_refHistory; // recent versions: a lagging device must not move it back
+    Eigen::Isometry3d m_Wref = Eigen::Isometry3d::Identity(); // the head tracker's version of it
     Eigen::Isometry3d m_G = Eigen::Isometry3d::Identity();
     double m_lastT = -1.0;
     uint32_t m_referenceMoves = 0;

@@ -7,7 +7,6 @@ namespace spacecal::trust {
 
 namespace {
     constexpr double k_RAD_TO_DEG = 57.29577951308232;
-    constexpr size_t k_REFERENCE_HISTORY = 6;
 
     double angleOf(const Eigen::Matrix3d& r)
     {
@@ -60,7 +59,6 @@ void FrameCorrector::reset()
     m_correcting = false;
     m_Sr = Eigen::Isometry3d::Identity();
     m_Wref = Eigen::Isometry3d::Identity();
-    m_refHistory.clear();
     m_G = Eigen::Isometry3d::Identity();
     m_lastT = -1.0;
     m_referenceMoves = m_deviceMoves = m_switchesAbsorbed = m_switchesShown = 0;
@@ -81,18 +79,11 @@ bool FrameCorrector::sameFamily(const Eigen::Isometry3d& a, const Eigen::Isometr
     return moveAt(delta, b.translation()) <= m_params.family_pos && angleOf(delta.linear()) <= m_params.family_deg;
 }
 
-bool FrameCorrector::knownReferenceVersion(const Eigen::Isometry3d& w) const
-{
-    for (const Eigen::Isometry3d& v : m_refHistory)
-        if (same(w, v))
-            return true;
-    return false;
-}
-
 Eigen::Isometry3d FrameCorrector::target(const Device& d) const
 {
     // SteamVR's map, pinned at the reference family: a device on that family (any version, it may
-    // lag behind) keeps exactly its place relative to the pinned frame; any other device gets G
+    // lag behind or run ahead of the head tracker) keeps exactly its place relative to the pinned
+    // frame; any other device gets G
     if (m_haveRef && sameFamily(d.W, m_Wref))
         return m_Sr * d.W.inverse();
     return m_G;
@@ -132,7 +123,6 @@ void FrameCorrector::tick(double t, const std::vector<FrameSample>& devices, boo
                 m_haveRef = true;
                 m_Wref = s.wfd;
                 m_Sr = m_G * m_Wref;
-                m_refHistory.assign(1, m_Wref);
                 break;
             }
         }
@@ -167,7 +157,6 @@ void FrameCorrector::tick(double t, const std::vector<FrameSample>& devices, boo
                 if (m_haveRef) {
                     m_Wref = s.wfd;
                     m_Sr = m_G * m_Wref;
-                    m_refHistory.assign(1, m_Wref);
                     emit(FrameEventKind::REFERENCE_SWITCHED, s.index, delta, 0.0, 0.0);
                 }
             } else {
@@ -193,20 +182,30 @@ void FrameCorrector::tick(double t, const std::vector<FrameSample>& devices, boo
             d.W = s.wfd;
         }
 
-        // the reference family moves with the first tracking device that shows a new version of it
-        if (m_haveRef && s.tracking && !same(d.W, m_Wref) && sameFamily(d.W, m_Wref) && !knownReferenceVersion(d.W)) {
-            const Eigen::Isometry3d delta = d.W * m_Wref.inverse();
-            const Eigen::Vector3d x = (m_Wref * s.pose).translation();
-            m_Wref = d.W;
-            m_refHistory.push_back(m_Wref);
-            if (m_refHistory.size() > k_REFERENCE_HISTORY)
-                m_refHistory.erase(m_refHistory.begin());
-            if (correct)
-                m_G = m_Sr * m_Wref.inverse();
-            else
+        // the reference is the head tracker's own version of its station's frame, whenever it tracks:
+        // the solver calibrates against its raw poses, so any other version leaves every device off
+        // the calibration by the difference. 2026-10-04 02:13:11: the head tracker went onto a
+        // station in the very frame SteamVR moved it by 10 cm, a tracker still on the old version
+        // (it took the new one 4 ms later) became the reference, and every device stayed 9 cm /
+        // 2.4 deg off for 40 minutes. Other devices never move the reference: on another version
+        // of its station they are held in the head tracker's version.
+        if (m_haveRef && s.reference && s.tracking && !same(d.W, m_Wref)) {
+            if (sameFamily(d.W, m_Wref)) {
+                const Eigen::Isometry3d delta = d.W * m_Wref.inverse();
+                const Eigen::Vector3d x = (m_Wref * s.pose).translation();
+                m_Wref = d.W;
+                if (correct)
+                    m_G = m_Sr * m_Wref.inverse();
+                else
+                    m_Sr = m_G * m_Wref;
+                m_referenceMoves++;
+                emit(FrameEventKind::REFERENCE_MOVED, s.index, delta, moveAt(delta, x), angleOf(delta.linear()));
+            } else {
+                // another station than the reference although the change looked small at the device
+                m_Wref = d.W;
                 m_Sr = m_G * m_Wref;
-            m_referenceMoves++;
-            emit(FrameEventKind::REFERENCE_MOVED, s.index, delta, moveAt(delta, x), angleOf(delta.linear()));
+                emit(FrameEventKind::REFERENCE_SWITCHED, s.index, Eigen::Isometry3d::Identity(), 0.0, 0.0);
+            }
         }
 
         if (s.tracking) {
