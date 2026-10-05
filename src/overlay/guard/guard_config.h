@@ -53,6 +53,15 @@ struct GuardConfig {
         double frames_slide_cm_s = 1.5; // cm/s at the device: held corrections slide back to SteamVR's map (0 = never)
         double frames_slide_deg_s = 0.5; // deg/s, the same for rotation
         bool frames_absorb_switches = true; // hold a device through a change of base station where SteamVR's maps of the two disagree
+        // the head tracker's place on the headset, learned while all is well and kept in head_mount.json (trust/head_mount.h)
+        bool head_mount = true; // learn and remember it
+        bool head_mount_startup = true; // at every overlay start, set the calibration from it once headset and head tracker hold still
+        bool head_mount_prior = true; // reject solves that would put the head tracker elsewhere on the headset
+        double head_mount_solve_max_cm = 5.0; // with head_mount_fix on, the prior uses head_mount_fix_min_cm when that is smaller
+        double head_mount_solve_max_deg = 3.0;
+        bool head_mount_fix = true; // slide the calibration back when the head tracker sits steadily away from its place (HeadMountFix)
+        double head_mount_fix_min_cm = 2.5; // ... by more than this
+        double head_mount_fix_rate_cm_s = 1.5; // ... at this speed
         double tick_hz = 0.0; // 0 = every overlay frame (recommended: verdicts precede every solver tick)
         // plausibility: steps are judged by what the device's own reported velocity does not explain
         double v_unexplained = 1.0; // m/s allowance for unexplained motion

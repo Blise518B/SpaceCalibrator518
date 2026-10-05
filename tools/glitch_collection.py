@@ -9,9 +9,10 @@ Moments (from the recording's own records):
 
 * major (kept from 120 s before to 60 s after): a marker you set (hotkey, overlay button, trigger
   hold), a SteamVR universe shift (the lighthouse devices' shared WorldFromDriver changed), a
-  calibration correction or a calibration step of 10 cm or more, the head tracker leaving
-  TRUSTED, three or more devices leaving TRUSTED or losing tracking within 1.5 s
-* minor (15 s before and after): any other device leaving TRUSTED
+  calibration correction or a calibration step of 10 cm or more (a head mount fix: of 10 cm or
+  more), the head tracker leaving TRUSTED, three or more devices leaving TRUSTED or losing
+  tracking within 1.5 s
+* minor (15 s before and after): any other device leaving TRUSTED, a smaller head mount fix
 
 A window folder holds the trimmed chunks (poses at full rate within 5 s of a moment, at most
 120 per second and device elsewhere; every other record kept), each device's transforms and
@@ -206,7 +207,11 @@ def find_moments(s: Session, overlay_target: int | None):
         for row in cal.itertuples():
             if target is None:
                 target = int(row.target)
-            if row.outcome == "corrected":
+            if row.outcome == "corrected" and row.trigger == "head_mount_fix":
+                # the trust layer slid the calibration back to the head tracker's place on the headset: a
+                # few a night, mostly a few cm; only large ones get a major window
+                moments.append(Moment(row.unix, "head_mount_fix", row.delta_trans_m >= 0.10, f"calibration slid back to the head tracker's place on the headset: {row.delta_trans_m * 100:.1f} cm"))
+            elif row.outcome == "corrected":
                 moments.append(Moment(row.unix, "correction", True, f"calibration corrected ({row.trigger}): moved {row.delta_trans_m * 100:.1f} cm / {row.delta_rot_deg:.2f} deg"))
             elif row.outcome in ("applied", "forced") and row.delta_trans_m >= 0.10 and row.trigger != "startup":
                 moments.append(Moment(row.unix, "calibration_step", True, f"calibration {row.outcome} ({row.trigger}): moved {row.delta_trans_m * 100:.1f} cm / {row.delta_rot_deg:.2f} deg, RMS {row.rms_m * 1000:.1f} mm"))

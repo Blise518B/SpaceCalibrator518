@@ -52,6 +52,13 @@ namespace {
     }
 }
 
+Eigen::Isometry3d reanchoredCalibration(const Eigen::Isometry3d& calibration, const Eigen::Isometry3d& hmd, const Eigen::Isometry3d& localOffset, const Eigen::Isometry3d& tracker)
+{
+    Eigen::Isometry3d out = calibration;
+    out.translation() += (hmd * localOffset).translation() - (calibration * tracker).translation();
+    return out;
+}
+
 double fitRigidDelta(const std::vector<Eigen::Vector3d>& a, const std::vector<Eigen::Vector3d>& b, Eigen::Isometry3d& delta)
 {
     delta = Eigen::Isometry3d::Identity();

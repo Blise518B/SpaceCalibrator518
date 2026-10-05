@@ -71,6 +71,7 @@ enum class CalibrationError : uint8_t {
     BadRelativeCalibration, // maths fucked up, try again soz
     DeviceUntrusted, // fork: the head tracker is SUSPECT/UNTRUSTED, or a recovery solve disagreed with the frozen calibration
     WaitingForTriggers, // fork: "apply only while both triggers are held" is on and they are not
+    HeadMountDisagrees, // fork: the solve puts the head tracker elsewhere on the headset than it has been sitting (trust/head_mount.h)
     Unknown,
 };
 
@@ -196,6 +197,9 @@ public:
     {
         return calibrationError == CalibrationError::None;
     }
+
+    // fork: the active calibration's RMS error on the solver's latest samples (INFINITY right after a change)
+    [[nodiscard]] double lastRmsError() const { return m_lastRmsError; }
 
     inline void forceNextCalibration()
     {

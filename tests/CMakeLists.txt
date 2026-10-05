@@ -70,6 +70,18 @@ if (MSVC)
     target_compile_definitions(spacecal_frames_test PRIVATE _USE_MATH_DEFINES NOMINMAX)
 endif()
 
+# the head tracker's place on the headset, remembered across sessions (src/overlay/trust/head_mount.h)
+add_executable(spacecal_head_mount_test
+    ${CMAKE_SOURCE_DIR}/tests/head_mount_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/overlay/trust/head_mount.cpp)
+target_include_directories(spacecal_head_mount_test
+    PRIVATE ${CMAKE_SOURCE_DIR}/src/overlay/trust
+    PRIVATE ${CMAKE_SOURCE_DIR}/tests
+    PRIVATE ${CMAKE_SOURCE_DIR}/vendor/eigen)
+if (MSVC)
+    target_compile_definitions(spacecal_head_mount_test PRIVATE _USE_MATH_DEFINES NOMINMAX)
+endif()
+
 # replay tool (same detector code as the overlay)
 add_library(spacecal_replay_core STATIC
     ${CMAKE_SOURCE_DIR}/tools/replay/replay_core.cpp
@@ -121,7 +133,7 @@ if (NOT MSVC)
     target_link_libraries(spacecal_pose_ring_test PRIVATE pthread)
 endif()
 
-add_custom_target(spacecal_tests DEPENDS spacecal_blackbox_test spacecal_trust_test spacecal_replay_test spacecal_pose_ring_test spacecal_live_test spacecal_universe_test spacecal_frames_test spacecal-replay)
+add_custom_target(spacecal_tests DEPENDS spacecal_blackbox_test spacecal_trust_test spacecal_replay_test spacecal_pose_ring_test spacecal_live_test spacecal_universe_test spacecal_frames_test spacecal_head_mount_test spacecal-replay)
 add_test(NAME replay COMMAND spacecal_replay_test)
 
 enable_testing()

@@ -60,7 +60,18 @@ void CalibrationAttempt::finished(uint8_t error, bool applied, double rms, doubl
 
 void CalibrationAttempt::corrected()
 {
-    send(static_cast<uint8_t>(blackbox::CalibrationOutcome::CORRECTED), 0, std::numeric_limits<double>::quiet_NaN(), 0.0, m_calibration.calibratedRotation, m_calibration.calibratedTranslation, 0);
+    correctedTo(m_calibration.calibratedRotation, m_calibration.calibratedTranslation);
+}
+
+void CalibrationAttempt::setBefore(const Eigen::Quaterniond& rotation, const Eigen::Vector3d& translation)
+{
+    m_prevRotation = rotation;
+    m_prevTranslation = translation;
+}
+
+void CalibrationAttempt::correctedTo(const Eigen::Quaterniond& rotation, const Eigen::Vector3d& translation)
+{
+    send(static_cast<uint8_t>(blackbox::CalibrationOutcome::CORRECTED), 0, std::numeric_limits<double>::quiet_NaN(), 0.0, rotation, translation, 0);
 }
 
 void CalibrationAttempt::send(uint8_t outcome, uint8_t error, double rms, double axisVariance, const Eigen::Quaterniond& rotation, const Eigen::Vector3d& translation, size_t samples)

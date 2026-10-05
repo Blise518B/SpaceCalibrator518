@@ -82,7 +82,7 @@ TYPE_POSE, TYPE_WFD, TYPE_APPLIED, TYPE_TRUST, TYPE_MARKER, TYPE_DEVICE, TYPE_TE
 RECORD_CARRIED = 1  # WORLD_FROM_DRIVER / APPLIED: b of a record repeated at a chunk start (blackbox_format.h)
 TYPE_CALIBRATION, TYPE_DEVICE_STATE, TYPE_LIFECYCLE = 9, 10, 11
 
-CALIB_TRIGGERS = {0: "unknown", 1: "standard", 2: "continuous", 3: "startup", 4: "trigger_hold", 5: "manual", 6: "playspace_jump", 7: "world_from_driver_jump"}
+CALIB_TRIGGERS = {0: "unknown", 1: "standard", 2: "continuous", 3: "startup", 4: "trigger_hold", 5: "manual", 6: "playspace_jump", 7: "world_from_driver_jump", 8: "head_mount_fix"}
 CALIB_OUTCOMES = {0: "rejected", 1: "applied", 2: "forced", 3: "skipped", 4: "corrected"}
 CALIB_OUTCOME_MASK = 0x0F
 CALIB_FLAG_CONTINUOUS = 1 << 4
@@ -91,7 +91,7 @@ CALIB_FLAG_RELATIVE = 1 << 5
 CALIB_ERRORS = {
     0: "none", 1: "lack_of_rotational_variance", 2: "lack_of_translation_variance", 3: "rms_too_high",
     4: "worse_rms_than_last", 5: "axis_variance_too_high", 6: "worse_axis_variance_than_last",
-    7: "bad_relative_calibration", 8: "device_untrusted", 9: "waiting_for_triggers", 10: "unknown",
+    7: "bad_relative_calibration", 8: "device_untrusted", 9: "waiting_for_triggers", 10: "head_mount_disagrees", 11: "unknown",
 }
 LIFECYCLE_KINDS = {0: "none", 1: "recorder_start", 2: "recorder_stop", 3: "overlay_connected", 4: "params", 5: "archive_cap_reached", 6: "leftovers", 7: "ring_gap"}
 

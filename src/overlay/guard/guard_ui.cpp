@@ -116,6 +116,26 @@ namespace {
             if (ImGui::CheckboxWithDescription(LOCALE_GET("guard_keep_stored_on_start").c_str(), &cfg.startup.keep_stored_calibration, LOCALE_GET("guard_keep_stored_on_start_desc").c_str())) {
                 saveAndPush();
             }
+            if (ImGui::CheckboxWithDescription(LOCALE_GET("guard_head_mount").c_str(), &cfg.trust.head_mount, LOCALE_GET("guard_head_mount_desc").c_str())) {
+                saveAndPush();
+            }
+            if (cfg.trust.head_mount) {
+                const trust::HeadMount& hm = tm->headMount();
+                const double minutes = hm.learnedSeconds() / 60.0;
+                if (hm.confident()) {
+                    const Eigen::Vector3d x = hm.pose().translation() * 100.0;
+                    ImGui::TextDisabled("%s", LOCALE_FORMAT("guard_head_mount_known", x.x(), x.y(), x.z(), minutes).c_str());
+                } else {
+                    ImGui::TextDisabled("%s", LOCALE_FORMAT("guard_head_mount_learning", minutes).c_str());
+                }
+                if (ImGui::CheckboxWithDescription(LOCALE_GET("guard_head_mount_fix").c_str(), &cfg.trust.head_mount_fix, LOCALE_GET("guard_head_mount_fix_desc").c_str())) {
+                    saveAndPush();
+                }
+                if (cfg.trust.head_mount_fix && tm->headMountFix().active()) {
+                    const double leftCm = tm->headMountFix().remaining() * 100.0;
+                    ImGui::TextDisabled("%s", LOCALE_FORMAT("guard_head_mount_fixing", leftCm).c_str());
+                }
+            }
             if (VRState* vrState = VRState::getInstance(); vrState && vrState->isSteamVrAvailable()) {
                 bool launch = vrState->launchesWithSteamVr();
                 if (ImGui::CheckboxWithDescription(LOCALE_GET("guard_launch_with_steamvr").c_str(), &launch, LOCALE_GET("guard_launch_with_steamvr_desc").c_str())) {

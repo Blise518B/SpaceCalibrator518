@@ -16,6 +16,7 @@ bin-tests\artifacts\Debug\spacecal_pose_ring_test.exe || exit /b 1
 bin-tests\artifacts\Debug\spacecal_live_test.exe || exit /b 1
 bin-tests\artifacts\Debug\spacecal_universe_test.exe || exit /b 1
 bin-tests\artifacts\Debug\spacecal_frames_test.exe || exit /b 1
+bin-tests\artifacts\Debug\spacecal_head_mount_test.exe || exit /b 1
 echo replay tool: bin-tests\artifacts\Debug\spacecal-replay.exe
 if exist .venv\Scripts\python.exe (
     .venv\Scripts\python.exe -m pytest tools\tests -q || exit /b 1

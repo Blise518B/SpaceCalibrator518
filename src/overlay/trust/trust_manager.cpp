@@ -1,5 +1,6 @@
 #include "trust_manager.h"
 #include "trust_params.h"
+#include "head_mount_store.h"
 
 #include "calibration.h"
 #include "guard/calibration_record.h"
@@ -10,8 +11,10 @@
 #include "recorder/recorder_host.h"
 #include "vr_core.h"
 
+#include <algorithm>
 #include <cmath>
 #include <fmt/format.h>
+#include <limits>
 
 namespace spacecal::trust {
 
@@ -39,6 +42,19 @@ namespace {
     bool isBodyWorn(vr::TrackedDeviceClass c)
     {
         return c == vr::TrackedDeviceClass_HMD || c == vr::TrackedDeviceClass_Controller || c == vr::TrackedDeviceClass_GenericTracker;
+    }
+
+    Eigen::Isometry3d isoFromSample(const PoseSample& s)
+    {
+        Eigen::Isometry3d iso = Eigen::Isometry3d::Identity();
+        iso.linear() = s.q.normalized().toRotationMatrix();
+        iso.translation() = s.p;
+        return iso;
+    }
+
+    double angleDeg(const Eigen::Matrix3d& r)
+    {
+        return Eigen::AngleAxisd(r).angle() * 180.0 / k_PI;
     }
 
     Eigen::Isometry3d isoFromCalibration(const Eigen::Quaterniond& rot, const Eigen::Vector3d& trans)
@@ -77,6 +93,22 @@ void TrustManager::reloadParams()
     m_frames.setParams(fp);
     m_tickInterval = cfg.trust.tick_hz > 0 ? 1.0 / cfg.trust.tick_hz : 0.0; // 0 = every frame
     m_consensus.setParams(paramsFromConfig(cfg.trust));
+    m_hmEnabled = cfg.trust.head_mount;
+    m_hmStartup = cfg.trust.head_mount_startup;
+    m_hmPrior = cfg.trust.head_mount_prior;
+    m_hmFixEnabled = cfg.trust.head_mount_fix;
+    HeadMountFixParams fp2 = m_hmFix.params();
+    fp2.on = std::max(0.01, cfg.trust.head_mount_fix_min_cm / 100.0);
+    fp2.rate = std::max(0.001, cfg.trust.head_mount_fix_rate_cm_s / 100.0);
+    m_hmFix.setParams(fp2);
+    HeadMountParams hp = m_headMount.params();
+    hp.solve_max_pos = cfg.trust.head_mount_solve_max_cm / 100.0;
+    // with the fix on, a solve the fix would undo is not taken either: otherwise, lying still, the solver
+    // and the fix would take turns moving the body between their two answers
+    if (m_hmFixEnabled)
+        hp.solve_max_pos = std::min(hp.solve_max_pos, fp2.on);
+    hp.solve_max_deg = cfg.trust.head_mount_solve_max_deg;
+    m_headMount.setParams(hp);
 }
 
 bool TrustManager::buildInput(double currentTime, TickInput& in, TrackingSystemCalibration** outCalibration)
@@ -248,6 +280,7 @@ void TrustManager::tick(double currentTime)
     handleTransitions(out, calibration);
     handleEvent(out, calibration);
     feedLive(in, out, calibration);
+    updateHeadMount(in, calibration, currentTime);
     refreshPins(calibration);
 
     // the driver learns about hold changes through the transform flags (see apply())
@@ -424,6 +457,313 @@ void TrustManager::refreshPins(TrackingSystemCalibration* calibration)
     calibration->applyQuiet();
     for (uint8_t i = 0; i < 64; i++)
         m_sentPins[i] = devicePin(i);
+}
+
+bool TrustManager::reanchorCalibration(TrackingSystemCalibration* calibration, double currentTime)
+{
+    const bool remembered = m_hmEnabled && m_headMount.confident();
+    if (!m_enabled || !calibration || !calibration->isValidCalibration() || (!remembered && !m_consensus.localOffsetValid()))
+        return false;
+    if (calibration->isContinuousCalibration() && calibration->isRelativeCalibration)
+        return false; // relative mode follows the head tracker every frame anyway
+    auto* manager = CalibrationManager::getInstance();
+    if (!manager || manager->getCalibrationCount() <= m_guardedCalibration || &manager->getCalibration(m_guardedCalibration) != calibration)
+        return false; // the learned offset belongs to the guarded calibration
+    const uint32_t ref = calibration->referenceDevice.deviceId;
+    const uint32_t tgt = calibration->targetDevice.deviceId;
+    if (ref >= 64 || tgt >= 64)
+        return false;
+    const PoseSample h = sampleFromDriverPose(manager->m_poses[ref], VRState::getInstance()->getVrDevice(ref).bIsConnected, currentTime);
+    const PoseSample s = sampleFromDriverPose(manager->m_poses[tgt], VRState::getInstance()->getVrDevice(tgt).bIsConnected, currentTime);
+    if (!h.tracking || !s.tracking)
+        return false;
+    // the learned offset lives in the trust layer's frame: stable target poses and C_trust = C * G^-1
+    const Eigen::Isometry3d G = m_perDeviceFrames ? m_frames.global() : m_universe.global();
+    const Eigen::Isometry3d a = m_perDeviceFrames ? m_frames.correction(static_cast<uint8_t>(tgt)) : m_universe.correction(static_cast<uint8_t>(tgt));
+    Eigen::Isometry3d H = Eigen::Isometry3d::Identity();
+    H.linear() = h.q.toRotationMatrix();
+    H.translation() = h.p;
+    Eigen::Isometry3d raw = Eigen::Isometry3d::Identity();
+    raw.linear() = s.q.toRotationMatrix();
+    raw.translation() = s.p;
+    const Eigen::Isometry3d C_old = isoFromCalibration(calibration->calibratedRotation, calibration->calibratedTranslation);
+    const Eigen::Isometry3d& place = remembered ? m_headMount.pose() : m_consensus.localOffset();
+    const Eigen::Isometry3d C_new = reanchoredCalibration(C_old * G.inverse(), H, place, a * raw) * G;
+    const double move = ((C_new * raw).translation() - (C_old * raw).translation()).norm();
+    const double angle = Eigen::AngleAxisd(C_new.linear() * C_old.linear().transpose()).angle() * 180.0 / k_PI;
+    // the head tracker sits a few cm from the headset; a learned offset or a shift far beyond that
+    // means a glitch is involved, and following it would throw the body away
+    if (place.translation().norm() > 0.4 || move > 0.5) {
+        LOG_CALIB_WARN("[trust] trigger hold: calibration not re-anchored (learned offset {:.2f} m, shift {:.2f} m)", place.translation().norm(), move);
+        return false;
+    }
+
+    guard::CalibrationAttempt fix(*calibration, false, static_cast<uint8_t>(blackbox::CalibrationTrigger::TRIGGER_HOLD));
+    calibration->calibratedRotation = Eigen::Quaterniond(C_new.linear()).normalized();
+    calibration->calibratedTranslation = C_new.translation();
+    calibration->invalidateMetrics(); // the solver's history and RMS belong to the old calibration
+    calibration->clearSamples();
+    calibration->apply();
+    manager->saveConfig();
+    fix.corrected();
+    for (uint8_t i = 0; i < 64; i++)
+        m_sentPins[i] = devicePin(i);
+    m_lastEventText = fmt::format("[trust] calibration shifted to the head tracker's place on the headset: {:.3f} m at the head (rotation kept, {:.2f} deg)", move, angle);
+    LOG_CALIB_NOTICE("{}", m_lastEventText);
+    if (auto* live = guard::LiveStats::getInstance())
+        live->pushEvent({ currentTime, guard::LiveEventKind::PLAYSPACE_SHIFT, static_cast<float>(move * 100.0), "re-anchored by trigger hold" });
+    return true;
+}
+
+void TrustManager::updateHeadMount(const TickInput& in, TrackingSystemCalibration* calibration, double currentTime)
+{
+    m_hmPosesValid = false;
+    if (!m_enabled || !m_hmEnabled || !calibration || in.calib.relativeMode)
+        return;
+    const std::string target = calibration->targetDevice.deviceSerialNumber;
+    const std::string reference = calibration->referenceDevice.deviceSerialNumber;
+    if (target.empty() || reference.empty())
+        return;
+    if (!m_hmLoaded || target != m_hmTarget || reference != m_hmReference) {
+        if (m_hmLoaded && m_hmDirty)
+            saveHeadMountState(m_headMount.state(m_hmTarget, m_hmReference));
+        HeadMountState s;
+        const bool have = loadHeadMountState(s) && m_headMount.restore(s, target, reference);
+        if (!have)
+            m_headMount.reset();
+        m_hmLoaded = true;
+        m_hmTarget = target;
+        m_hmReference = reference;
+        m_hmDirty = false;
+        m_hmStartupDone = false;
+        m_hmStillSince = -1.0;
+        m_hmLastLearnT = -1.0;
+        if (have) {
+            const Eigen::Vector3d x = m_headMount.pose().translation() * 100.0;
+            LOG_CALIB_INFO("[trust] head mount: {} sits at right {:.1f} / up {:.1f} / back {:.1f} cm on {} ({:.0f} min learned, rotation scatter {:.1f} deg)",
+                target, x.x(), x.y(), x.z(), reference, m_headMount.learnedSeconds() / 60.0, m_headMount.rotationScatterDeg());
+        } else {
+            LOG_CALIB_INFO("[trust] head mount: nothing remembered for {} on {} yet, learning", target, reference);
+        }
+    }
+    if (!in.calib.C_world_valid)
+        return;
+    const DeviceInput* ref = nullptr;
+    const DeviceInput* tgt = nullptr;
+    for (const DeviceInput& d : in.devices) {
+        if (d.index == in.calib.referenceIndex)
+            ref = &d;
+        if (d.index == in.calib.targetIndex)
+            tgt = &d;
+    }
+    if (!ref || !tgt || !ref->sample.tracking || !tgt->sample.tracking) {
+        m_hmStillSince = -1.0;
+        return;
+    }
+    // in the trust layer's frame: C_world * stable == applied calibration * raw
+    const Eigen::Isometry3d H = isoFromSample(ref->sample);
+    const Eigen::Isometry3d T = isoFromSample(tgt->sample);
+    const Eigen::Isometry3d& C = in.calib.C_world;
+    m_hmH = H;
+    m_hmT = T;
+    m_hmC = C;
+    m_hmPosesValid = true;
+    const bool trusted = m_consensus.status(in.calib.targetIndex).state == State::TRUSTED;
+    const HeadMountParams& hp = m_headMount.params();
+
+    // learn while the head tracker sits where a well fitting calibration expects it, and only from a
+    // calibration as the solver (or whoever) left it: never from one the fix below moved towards X
+    const double dt = m_hmLastLearnT >= 0.0 ? currentTime - m_hmLastLearnT : 0.0;
+    m_hmLastLearnT = currentTime;
+    if (in.calib.valid && trusted && m_residualValid && m_residual <= hp.learn_max_residual && calibration->lastRmsError() <= hp.learn_max_rms
+        && m_hmFix.offset().norm() < 0.005) {
+        const bool before = m_headMount.confident();
+        m_headMount.learn(H.inverse() * C * T, dt);
+        m_hmDirty = true;
+        if (!before && m_headMount.confident()) {
+            const Eigen::Vector3d x = m_headMount.pose().translation() * 100.0;
+            LOG_CALIB_NOTICE("[trust] head mount: learned, {} sits at right {:.1f} / up {:.1f} / back {:.1f} cm on the headset", target, x.x(), x.y(), x.z());
+        }
+    }
+    if (m_hmDirty && (m_hmLastSaveT < 0.0 || currentTime - m_hmLastSaveT > 60.0)) {
+        saveHeadMountState(m_headMount.state(m_hmTarget, m_hmReference));
+        m_hmLastSaveT = currentTime;
+        m_hmDirty = false;
+    }
+
+    runHeadMountFix(calibration, currentTime, ref->sample, tgt->sample, H, T, C, in.calib.valid);
+
+    // once per overlay start: put the calibration where the remembered place says, as soon as headset
+    // and head tracker hold still (SteamVR re-solves its base stations at every start, the Quest may
+    // re-center: on 2026-10-04 20:50 the stored calibration put the head tracker 42 cm from its place)
+    if (!m_hmStartup || m_hmStartupDone || !m_headMount.confident() || !in.calib.valid)
+        return;
+    const bool still = trusted && ref->sample.v.norm() < hp.startup_still_speed && tgt->sample.v.norm() < hp.startup_still_speed;
+    if (!still) {
+        m_hmStillSince = -1.0;
+        return;
+    }
+    if (m_hmStillSince < 0.0)
+        m_hmStillSince = currentTime;
+    if (currentTime - m_hmStillSince < hp.startup_still_s)
+        return;
+    m_hmStartupDone = true;
+    const Eigen::Isometry3d Cnew = m_headMount.placeCalibration(C, H, T);
+    const double move = ((Cnew * T).translation() - (C * T).translation()).norm();
+    const double angle = angleDeg(Cnew.linear() * C.linear().transpose());
+    if (move < hp.startup_min_change && angle < 0.5) {
+        LOG_CALIB_INFO("[trust] head mount: the stored calibration puts the head tracker where it belongs ({:.1f} cm, {:.2f} deg)", move * 100.0, angle);
+        return;
+    }
+    if (move > hp.startup_max_change || angle > hp.startup_max_deg) {
+        LOG_CALIB_WARN("[trust] head mount: the stored calibration is {:.0f} cm / {:.1f} deg from the remembered place, too far to trust either: kept, the solver decides", move * 100.0, angle);
+        return;
+    }
+    auto* manager = CalibrationManager::getInstance();
+    const Eigen::Isometry3d applied = Cnew * trustGlobal();
+    guard::CalibrationAttempt fix(*calibration, false, static_cast<uint8_t>(blackbox::CalibrationTrigger::STARTUP));
+    calibration->calibratedRotation = Eigen::Quaterniond(applied.linear()).normalized();
+    calibration->calibratedTranslation = applied.translation();
+    calibration->invalidateMetrics(); // the solver's history and RMS belong to the stored calibration
+    calibration->clearSamples();
+    calibration->apply();
+    if (manager)
+        manager->saveConfig();
+    fix.corrected();
+    for (uint8_t i = 0; i < 64; i++)
+        m_sentPins[i] = devicePin(i);
+    m_lastEventText = fmt::format("[trust] startup: calibration placed from the head tracker's remembered place on the headset, {:.1f} cm / {:.2f} deg from the stored one{}",
+        move * 100.0, angle, m_headMount.usesRotation() ? "" : " (shifted, the rotation is the stored one)");
+    LOG_CALIB_NOTICE("{}", m_lastEventText);
+    if (auto* live = guard::LiveStats::getInstance())
+        live->pushEvent({ currentTime, guard::LiveEventKind::PLAYSPACE_SHIFT, static_cast<float>(move * 100.0), "placed from the head mount" });
+}
+
+void TrustManager::runHeadMountFix(TrackingSystemCalibration* calibration, double currentTime, const PoseSample& headset, const PoseSample& tracker,
+    const Eigen::Isometry3d& H, const Eigen::Isometry3d& T, const Eigen::Isometry3d& C, bool calibrationValid)
+{
+    // someone else changed the applied calibration since the fix last looked (a solve, the trigger hold,
+    // the startup placement, a frame correction): it replaces the fix
+    const bool changed = m_fixHaveLast
+        && ((calibration->calibratedTranslation - m_fixAppliedTrans).norm() > 1e-6 || calibration->calibratedRotation.angularDistance(m_fixAppliedRot) > 1e-6);
+    const Eigen::Vector3d atHead = H * m_headMount.pose().translation();
+    HeadMountFix::Input fin;
+    fin.t = currentTime;
+    fin.gap = atHead - C * T.translation();
+    fin.gapBefore = m_fixHaveLast ? Eigen::Vector3d(atHead - m_fixLastC * T.translation()) : fin.gap;
+    fin.calibrationChanged = changed;
+    // speeds as reported, and from the last tick (not every headset driver reports them)
+    const double dt = m_fixPrevTime >= 0.0 ? currentTime - m_fixPrevTime : -1.0;
+    fin.headsetSpeed = headset.v.norm();
+    fin.headsetTurn = headset.w.norm() * 180.0 / k_PI;
+    fin.trackerSpeed = tracker.v.norm();
+    if (dt > 1e-3 && dt < 0.2) {
+        fin.headsetSpeed = std::max(fin.headsetSpeed, (H.translation() - m_fixPrevH.translation()).norm() / dt);
+        fin.headsetTurn = std::max(fin.headsetTurn, angleDeg(H.linear() * m_fixPrevH.linear().transpose()) / dt);
+        fin.trackerSpeed = std::max(fin.trackerSpeed, (T.translation() - m_fixPrevT.translation()).norm() / dt);
+    } else {
+        fin.headsetSpeed = std::numeric_limits<double>::infinity(); // no idea how fast: not slow
+    }
+    fin.allowed = m_hmFixEnabled && m_headMount.confident() && calibrationValid && (m_hmStartupDone || !m_hmStartup) && !m_holdActive;
+    m_fixPrevH = H;
+    m_fixPrevT = T;
+    m_fixPrevTime = currentTime;
+    m_fixLastC = C;
+    m_fixHaveLast = true;
+
+    const HeadMountFix::Output out = m_hmFix.update(fin);
+    auto* manager = CalibrationManager::getInstance();
+    const auto record = [&](const Eigen::Quaterniond& afterRot, const Eigen::Vector3d& afterTrans) {
+        guard::CalibrationAttempt rec(*calibration, false, static_cast<uint8_t>(blackbox::CalibrationTrigger::HEAD_MOUNT_FIX));
+        rec.setBefore(m_fixStartRot, m_fixStartTrans);
+        rec.correctedTo(afterRot, afterTrans);
+    };
+    if (out.interrupted && m_fixOpen) {
+        // the black box gets what the fix had moved: from where it started to where it left the calibration
+        LOG_CALIB_INFO("[trust] head mount fix: stopped after {:.1f} cm, a new calibration was applied", out.size * 100.0);
+        record(m_fixAppliedRot, m_fixAppliedTrans);
+        m_fixOpen = false;
+    }
+    if (out.jumped) {
+        LOG_CALIB_INFO("[trust] head mount fix: the gap at the head stepped {:.1f} cm without the calibration changing (the head tracker or the headset jumped): nothing is fixed for {:.0f} s",
+            out.size * 100.0, m_hmFix.params().quarantine);
+        if (m_fixOpen) {
+            record(calibration->calibratedRotation, calibration->calibratedTranslation);
+            m_fixOpen = false;
+        }
+    }
+    if (out.started) {
+        const Eigen::Vector3d g = H.linear().transpose() * out.gap * 100.0; // in the headset's frame: right / up / back
+        m_lastEventText = fmt::format("[trust] head mount fix: the head tracker has sat {:.1f} cm from its place on the headset for {:.0f} s (right {:+.1f} / up {:+.1f} / back {:+.1f} cm): sliding the calibration back at {:.1f} cm/s",
+            out.size * 100.0, m_hmFix.params().hold, g.x(), g.y(), g.z(), m_hmFix.params().rate * 100.0);
+        LOG_CALIB_NOTICE("{}", m_lastEventText);
+        m_fixOpen = true;
+        m_fixStartRot = calibration->calibratedRotation;
+        m_fixStartTrans = calibration->calibratedTranslation;
+    }
+    if (out.shift.squaredNorm() > 0.0) {
+        // a world-space shift of the calibration in the trust layer's frame is the same shift of the
+        // applied calibration (C_world = applied * global^-1)
+        calibration->calibratedTranslation += out.shift;
+        calibration->applyQuiet();
+    }
+    m_fixAppliedRot = calibration->calibratedRotation;
+    m_fixAppliedTrans = calibration->calibratedTranslation;
+    if (out.finished || out.snapped) {
+        if (out.finished) {
+            m_lastEventText = fmt::format("[trust] head mount fix: done, the calibration slid {:.1f} cm", out.size * 100.0);
+        } else {
+            m_lastEventText = fmt::format("[trust] head mount fix: the offset went away by itself, the {:.1f} cm fix is undone", out.size * 100.0);
+            if (!m_fixOpen) {
+                m_fixStartRot = calibration->calibratedRotation;
+                m_fixStartTrans = calibration->calibratedTranslation - out.shift;
+            }
+        }
+        LOG_CALIB_NOTICE("{}", m_lastEventText);
+        record(calibration->calibratedRotation, calibration->calibratedTranslation);
+        m_fixOpen = false;
+        if (manager)
+            manager->saveConfig();
+        if (auto* live = guard::LiveStats::getInstance())
+            live->pushEvent({ currentTime, guard::LiveEventKind::PLAYSPACE_SHIFT, static_cast<float>(out.size * 100.0), out.finished ? "slid back to the head mount" : "head mount fix undone" });
+    }
+}
+
+SolveVerdict TrustManager::judgeSolveWithHeadMount(const TrackingSystemCalibration& calibration, const Eigen::Quaterniond& rotation, const Eigen::Vector3d& translation)
+{
+    if (!m_enabled || !m_hmEnabled || !m_hmPrior || !m_hmPosesValid)
+        return SolveVerdict::NO_MODEL;
+    if (calibration.isContinuousCalibration() && calibration.isRelativeCalibration)
+        return SolveVerdict::NO_MODEL;
+    auto* manager = CalibrationManager::getInstance();
+    if (!manager || manager->getCalibrationCount() <= m_guardedCalibration || &manager->getCalibration(m_guardedCalibration) != &calibration)
+        return SolveVerdict::NO_MODEL;
+    const Eigen::Isometry3d proposed = isoFromCalibration(rotation, translation) * trustGlobal().inverse(); // into the trust layer's frame
+    double pos = 0.0, deg = 0.0;
+    const SolveVerdict v = m_headMount.judgeSolve(proposed, m_hmH, m_hmT, &pos, &deg, &m_hmC);
+    if (v == SolveVerdict::DISAGREES) {
+        LOG_CALIB_INFO("[trust] head mount: solve rejected, it puts the head tracker {:.1f} cm / {:.1f} deg from its place on the headset", pos * 100.0, deg);
+    } else if (v == SolveVerdict::IMPROVES) {
+        LOG_CALIB_INFO("[trust] head mount: solve accepted, it puts the head tracker {:.1f} cm from its place on the headset, closer than the calibration in use", pos * 100.0);
+    } else if (v == SolveVerdict::REMOUNTED) {
+        m_hmDirty = true;
+        LOG_CALIB_NOTICE("[trust] head mount: {} solves in a row put the head tracker {:.1f} cm / {:.1f} deg from its remembered place: taken as re-mounted, learning anew",
+            m_headMount.params().solve_disagree_n, pos * 100.0, deg);
+    }
+    return v;
+}
+
+void TrustManager::noteSolveApplied()
+{
+    // observe-only (hold off): the solver applies without asking, so a recovering head tracker waited
+    // for a recovery solve report that never came (2026-10-04: RECOVERING from 04:46 to 06:08 while
+    // the solver applied every few seconds). An applied solve is the solver's word that the
+    // calibration fits the head tracker again; with hold on, isRecovering() runs the real check.
+    if (!m_enabled || m_holdEnabled)
+        return;
+    m_solveAttempted = true;
+    m_solveValid = true;
+    m_solveAgrees = true;
 }
 
 void TrustManager::forceTrustAll(double currentTime, const char* who)

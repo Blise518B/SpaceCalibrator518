@@ -33,6 +33,7 @@ static const CalibrationErrorMapping c_calibrationErrorMapping[] = {
     { CalibrationError::BadRelativeCalibration, "bad relative calibration", "calibration_error_bad_relative_calibration" },
     { CalibrationError::DeviceUntrusted, "head tracker not trusted (fork trust layer)", "calibration_error_device_untrusted" }, // fork
     { CalibrationError::WaitingForTriggers, "waiting for both triggers to be held", "calibration_error_waiting_for_triggers" }, // fork
+    { CalibrationError::HeadMountDisagrees, "the head tracker would sit elsewhere on the headset", "calibration_error_head_mount_disagrees" }, // fork
 };
 
 CalibrationErrorMapping getCalibrationErrorMapping(CalibrationError eCalibrationError)
@@ -364,6 +365,13 @@ CalibrationError TrackingSystemCalibration::computeCalibrationOneshot(double cur
         eCalibrationError = CalibrationError::WorseAxisVarianceThanLast;
     }
 
+    // fork: the head tracker's remembered place on the headset is a prior for every solve that passed the
+    // checks above: one that puts the tracker elsewhere on the headset is rejected (trust/head_mount.h)
+    if (eCalibrationError == CalibrationError::None && !bForceCalibration && isContinuousCalibration() && !isRelativeCalibration && trustManager
+        && trustManager->judgeSolveWithHeadMount(*this, computedRotation, computedTranslation) == trust::SolveVerdict::DISAGREES) {
+        eCalibrationError = CalibrationError::HeadMountDisagrees;
+    }
+
     if (eCalibrationError == CalibrationError::None && (isRelativeCalibration && !makeCalibrationLocal(computedRotation, computedTranslation))) {
         eCalibrationError = CalibrationError::BadRelativeCalibration;
     }
@@ -410,6 +418,8 @@ CalibrationError TrackingSystemCalibration::computeCalibrationOneshot(double cur
         if (eCalibrationError == CalibrationError::None && isContinuousCalibration()) {
             trackCollectedSamplesForErrorTracking();
             m_lastSuccessfulCalibTime = currentTime;
+            if (trustManager)
+                trustManager->noteSolveApplied(); // fork: observe-only recovery (trust_manager.cpp)
         }
 
         apply();

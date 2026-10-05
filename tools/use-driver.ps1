@@ -3,9 +3,11 @@
 # toggle in SteamVR would switch off both. Run with SteamVR closed; it takes effect on its next start.
 #   powershell -ExecutionPolicy Bypass -File tools\use-driver.ps1 fork
 #   powershell -ExecutionPolicy Bypass -File tools\use-driver.ps1 steam
-# In a source checkout the fork is dist\; in the release zip this script sits next to the driver
-# and the fork is its own folder.
-param([Parameter(Mandatory = $true)][ValidateSet('fork', 'steam')][string]$Which)
+#   powershell -ExecutionPolicy Bypass -File tools\use-driver.ps1 none   (no Space Calibrator driver at all)
+# In a source checkout the fork is dist\; in the release zip and the installed copy this script sits
+# next to the driver and the fork is its own folder. The installer runs `fork` after installing and
+# `steam` (or `none` without the Steam version) when uninstalling.
+param([Parameter(Mandatory = $true)][ValidateSet('fork', 'steam', 'none')][string]$Which)
 $ErrorActionPreference = 'Stop'
 
 if (Get-Process vrserver -ErrorAction SilentlyContinue) {
@@ -36,17 +38,17 @@ function Find-SteamInstall {
     throw 'Steam version of Space Calibrator not found in any Steam library.'
 }
 
-$target = if ($Which -eq 'fork') { $forkDir } else { Find-SteamInstall }
-if (-not (Test-Spacecal $target)) { throw "No driver_01spacecalibrator.dll under $target (build first?)" }
+$target = switch ($Which) { 'fork' { $forkDir } 'steam' { Find-SteamInstall } default { $null } }
+if ($target -and -not (Test-Spacecal $target)) { throw "No driver_01spacecalibrator.dll under $target (build first?)" }
 
 Copy-Item $pathsFile "$pathsFile.bak-$(Get-Date -Format yyyyMMdd-HHmmss)"
 $have = $false
-foreach ($d in @($cfg.external_drivers)) {
-    if ((Norm $d) -eq (Norm $target)) { $have = $true; continue }
+foreach ($d in @($cfg.external_drivers | Where-Object { $_ })) {
+    if ($target -and (Norm $d) -eq (Norm $target)) { $have = $true; continue }
     if (Test-Spacecal $d) { & $vrpathreg removedriver $d; Write-Host "removed $d" }
 }
-if (-not $have) { & $vrpathreg adddriver $target; Write-Host "added   $target" }
+if ($target -and -not $have) { & $vrpathreg adddriver $target; Write-Host "added   $target" }
 
-$now = (Get-Content $pathsFile -Raw | ConvertFrom-Json).external_drivers | Where-Object { Test-Spacecal $_ }
-Write-Host "Space Calibrator driver now: $($now -join ', ')"
+$now = @((Get-Content $pathsFile -Raw | ConvertFrom-Json).external_drivers | Where-Object { $_ -and (Test-Spacecal $_) })
+Write-Host "Space Calibrator driver now: $(if ($now.Count) { $now -join ', ' } else { 'none' })"
 Write-Host 'Start SteamVR to load it.'

@@ -198,6 +198,13 @@ private:
     uint64_t m_anchors = 0;
 };
 
+// The calibration shifted, its rotation kept, so that the head tracker lands at its learned place on
+// the headset: (result * tracker).translation() == (hmd * localOffset).translation(). One pair of poses
+// is enough, no motion is needed (the trigger hold). Only the learned position is used, which the
+// residual checks all the time; the learned rotation is never checked, and taking it rotated the
+// calibration by 20 to 59 deg at once (2026-10-04 09:42 to 09:44, six holds in a row).
+Eigen::Isometry3d reanchoredCalibration(const Eigen::Isometry3d& calibration, const Eigen::Isometry3d& hmd, const Eigen::Isometry3d& localOffset, const Eigen::Isometry3d& tracker);
+
 // Rigid fit b_i ~= delta * a_i (Kabsch). With two points only the translation is fitted.
 // Returns the RMS residual, or a negative number when fewer than two points were given.
 double fitRigidDelta(const std::vector<Eigen::Vector3d>& a, const std::vector<Eigen::Vector3d>& b, Eigen::Isometry3d& delta);

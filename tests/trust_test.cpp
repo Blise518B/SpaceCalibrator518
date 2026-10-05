@@ -723,6 +723,25 @@ TEST(a_solve_that_moves_the_calibration_is_not_a_glitch)
     }
 }
 
+TEST(reanchor_shifts_the_calibration_and_keeps_its_rotation)
+{
+    // the calibration went 15 cm off (2026-10-04 06:08): one pair of poses and the learned position of
+    // the head tracker on the headset put it back, no motion needed
+    const Eigen::Isometry3d C_true = makeIso(-37.0, Eigen::Vector3d(-0.95, 0.30, 2.18));
+    const Eigen::Isometry3d C_L = makeIso(1.5, Eigen::Vector3d(-0.01, 0.107, -0.035)); // head tracker in the HMD frame
+    const Eigen::Isometry3d T = makeIso(64.0, Eigen::Vector3d(0.4, 0.55, -1.9)); // head tracker, raw lighthouse
+    const Eigen::Isometry3d H = C_true * T * C_L.inverse(); // headset, Quest world
+    Eigen::Isometry3d C_off = C_true;
+    C_off.translation() += Eigen::Vector3d(0.0, -0.15, 0.05);
+    const Eigen::Isometry3d C = reanchoredCalibration(C_off, H, C_L, T);
+    CHECK((C.matrix() - C_true.matrix()).norm() < 1e-12);
+    // a learned rotation 40 deg off (it is never checked) must not rotate the calibration (09:42: 41 deg)
+    const Eigen::Isometry3d C_L_bad = Eigen::Isometry3d(Eigen::Translation3d(C_L.translation())) * makeIso(40.0, Eigen::Vector3d::Zero());
+    const Eigen::Isometry3d C2 = reanchoredCalibration(C_off, H, C_L_bad, T);
+    CHECK((C2.linear() - C_off.linear()).norm() < 1e-12);
+    CHECK(((C2 * T).translation() - (H * C_L).translation()).norm() < 1e-12);
+}
+
 int main()
 {
     return spacecal::test::runAll();

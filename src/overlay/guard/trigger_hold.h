@@ -1,8 +1,11 @@
 #pragma once
 
 // Trigger-hold recalibration (fork, docs/DESIGN.md section 8).
-//   - manual override: both triggers held for `hold_seconds` -> marker, every device trusted,
-//     the next solve is forced (the way out of any trust state)
+//   - manual override: both triggers held for `hold_seconds` -> marker, the calibration shifted at
+//     once (rotation kept) to the head tracker's learned place on the headset (no motion needed),
+//     every device trusted, a fresh calibration follows when a solve passes the usual checks (never
+//     forced: a forced solve from a still head threw the calibration far off). The way out of any
+//     trust state.
 //   - optional 1.5.1 behaviour: continuous updates are applied only while both triggers are held
 // Input comes from IVRInput with the action manifest in assets/input (works for any controller),
 // with the legacy GetControllerState as fallback when the manifest could not be registered.

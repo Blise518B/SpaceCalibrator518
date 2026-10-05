@@ -65,6 +65,7 @@ enum class CalibrationTrigger : uint8_t {
     MANUAL = 5, // a settings change in the UI forced the next solve
     PLAYSPACE_JUMP = 6, // trust layer: every lighthouse device moved together, the fitted delta was applied
     WORLD_FROM_DRIVER_JUMP = 7, // upstream auto-fix after a WorldFromDriver change
+    HEAD_MOUNT_FIX = 8, // trust layer: the head tracker sat steadily away from its place on the headset, the calibration slid back (CORRECTED)
 };
 
 // CALIBRATION: what came of it (low nibble of Record::b)
@@ -210,6 +211,7 @@ inline const char* calibrationTriggerName(CalibrationTrigger t)
     case CalibrationTrigger::MANUAL: return "manual";
     case CalibrationTrigger::PLAYSPACE_JUMP: return "playspace_jump";
     case CalibrationTrigger::WORLD_FROM_DRIVER_JUMP: return "world_from_driver_jump";
+    case CalibrationTrigger::HEAD_MOUNT_FIX: return "head_mount_fix";
     default: return "unknown";
     }
 }

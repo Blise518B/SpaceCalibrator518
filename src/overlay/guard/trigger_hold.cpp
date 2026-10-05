@@ -169,10 +169,24 @@ void TriggerHold::fire(double currentTime)
     if (EventMarker::getInstance())
         EventMarker::getInstance()->mark(blackbox::MarkerSource::TRIGGERS, "trigger hold: manual recalibration");
 
-    if (trust::TrustManager::getInstance())
-        trust::TrustManager::getInstance()->forceTrustAll(currentTime, "trigger hold");
-
+    // First shift the calibration to where the head tracker's learned place on the headset says it
+    // belongs: instant and without any motion. The solver needs head rotation to find a new calibration,
+    // and lying still it took two minutes (2026-10-04 06:08 to 06:10, everything 8 to 17 cm off).
+    // Before forceTrustAll, which forgets the learned offset.
     auto* manager = CalibrationManager::getInstance();
+    auto* trustManager = trust::TrustManager::getInstance();
+    bool reanchored = false;
+    if (manager && trustManager) {
+        for (size_t i = 0; i < manager->getCalibrationCount(); i++) {
+            TrackingSystemCalibration& c = manager->getCalibration(i);
+            if (c.isContinuousCalibration() && trustManager->reanchorCalibration(&c, currentTime))
+                reanchored = true;
+        }
+    }
+
+    if (trustManager)
+        trustManager->forceTrustAll(currentTime, "trigger hold");
+
     if (manager) {
         for (size_t i = 0; i < manager->getCalibrationCount(); i++) {
             TrackingSystemCalibration& c = manager->getCalibration(i);
@@ -180,12 +194,16 @@ void TriggerHold::fire(double currentTime)
                 continue;
             c.clearSamples();
             c.invalidateMetrics();
-            c.forkForceTrigger = static_cast<uint8_t>(blackbox::CalibrationTrigger::TRIGGER_HOLD);
-            c.forceNextCalibration();
+            // A fresh calibration follows, applied only when the solve passes the usual checks. It used
+            // to be forced: whoever holds the triggers stands still, and a solve forced from samples
+            // without head rotation threw the calibration far off (2026-10-03, 2026-10-04).
         }
     }
-    if (cfg.triggers.haptics)
+    if (cfg.triggers.haptics) {
         pulse(0.15f, 0.8f);
+        if (reanchored)
+            m_secondPulseAt = currentTime + 0.3; // done right away: the double pulse of an applied solve
+    }
 }
 
 } // namespace spacecal::guard

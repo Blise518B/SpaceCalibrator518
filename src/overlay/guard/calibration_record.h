@@ -28,6 +28,9 @@ public:
     void finished(uint8_t error, bool applied, double rms, double axisVariance, const Eigen::Quaterniond& rotation, const Eigen::Vector3d& translation, size_t samples);
     // nothing solved: the active calibration was shifted by a measured jump (call after the shift)
     void corrected();
+    // the same for a change spread over a while (the head mount fix): from `setBefore` to the values given
+    void setBefore(const Eigen::Quaterniond& rotation, const Eigen::Vector3d& translation);
+    void correctedTo(const Eigen::Quaterniond& rotation, const Eigen::Vector3d& translation);
 
 private:
     void send(uint8_t outcome, uint8_t error, double rms, double axisVariance, const Eigen::Quaterniond& rotation, const Eigen::Vector3d& translation, size_t samples);
